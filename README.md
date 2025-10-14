@@ -6,6 +6,7 @@ A reverse engineering project for the magic caster wand.
 
 Wands: MCW-###
 Box: MCB-###
+
 ### Chipset
 Wand: https://www.nordicsemi.com/Products/nRF52832
 Box: https://www.nordicsemi.com/Products/nRF52810
