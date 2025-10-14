@@ -1,0 +1,223 @@
+Scanning for BLE devices...
+Found target: MCW-7DFE [E0:62:21:56:7D:FE]
+Connected to MCW-7DFE
+Subscribed to 57420003-587e-48a0-974c-544d6163c577
+Subscribed to 00002a19-0000-1000-8000-00805f9b34fb
+Available services and characteristics:
+  Service 00001800-0000-1000-8000-00805f9b34fb
+    Characteristic 00002a00-0000-1000-8000-00805f9b34fb | Properties: ['read', 'write']
+    Characteristic 00002a01-0000-1000-8000-00805f9b34fb | Properties: ['read']
+    Characteristic 00002a04-0000-1000-8000-00805f9b34fb | Properties: ['read']
+    Characteristic 00002aa6-0000-1000-8000-00805f9b34fb | Properties: ['read']
+  Service 00001801-0000-1000-8000-00805f9b34fb
+    Characteristic 00002a05-0000-1000-8000-00805f9b34fb | Properties: ['indicate']
+  Service 0000180f-0000-1000-8000-00805f9b34fb
+    Characteristic 00002a19-0000-1000-8000-00805f9b34fb | Properties: ['read', 'notify']
+  Service 57420001-587e-48a0-974c-544d6163c577
+    Characteristic 57420002-587e-48a0-974c-544d6163c577 | Properties: ['write-without-response', 'write']
+    Characteristic 57420003-587e-48a0-974c-544d6163c577 | Properties: ['notify']
+  Service 0000fe59-0000-1000-8000-00805f9b34fb
+    Characteristic 8ec90003-f315-4f60-9fb8-838830daea50 | Properties: ['indicate', 'write']
+Listening for notifications (Ctrl+C to stop)...
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1008 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1008 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1008 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[00002a19-0000-1000-8000-00805f9b34fb (Handle: 15): Battery Level] Notification: 4e | ASCII: N
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII:
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[00002a19-0000-1000-8000-00805f9b34fb (Handle: 15): Battery Level] Notification: 4f | ASCII: O
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1006 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100e | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100e | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100c | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100e | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1006 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100e | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 2400000750726f7465676f | ASCII: $Protego
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1008 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100d | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1008 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII:
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100e | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1008 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[00002a19-0000-1000-8000-00805f9b34fb (Handle: 15): Battery Level] Notification: 50 | ASCII: P
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII:
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII:
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[00002a19-0000-1000-8000-00805f9b34fb (Handle: 15): Battery Level] Notification: 4f | ASCII: O
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII:
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII:
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100a | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1002 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100f | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1009 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 100b | ASCII: 
+
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1003 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1001 | ASCII:
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 1000 | ASCII: 
+[57420003-587e-48a0-974c-544d6163c577 (Handle: 21): Unknown] Notification: 014001 | ASCII: @
