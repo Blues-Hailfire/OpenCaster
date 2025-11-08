@@ -1,90 +1,72 @@
 import asyncio
 from bleak import BleakClient, BleakScanner
 
-TARGET_NAME = "MCW-7DFE"
-UART_WRITE_UUID = "57420002-587e-48a0-974c-544d6163c577"
-UART_NOTIFY_UUID = "57420003-587e-48a0-974c-544d6163c577"
-BATTERY_NOTIFY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+DEVICE_NAME = "MCW-7DFE"
+SERVICE_UUID = "57420003-587e-48a0-974c-544d6163c577"
+CHAR_UUID = SERVICE_UUID  # Your characteristic for notifications
+PACKETS = ["021002", "02100a", "02100b"]
 
-KEEPALIVE_INTERVAL = 5  # seconds
+# Map known status codes to human-readable
+STATUS_CODES = {
+    "1000": "Ready / Idle",
+    "1001": "Action Started",
+    "1002": "Action Ended / Ack",
+    "1003": "Unknown Event 3",
+    "1006": "Unknown Event 6",
+    "1008": "Unknown Event 8",
+    "1009": "Unknown Event 9",
+    "100a": "Unknown Event A",
+    "100b": "Unknown Event B",
+    "100e": "Unknown Event E",
+    "100f": "Unknown Event F",
+}
 
-def handle_notification(sender: str, data: bytearray):
-    ascii_data = data.decode(errors='ignore')
-    print(f"[{sender}] Notification: {data.hex()} | ASCII: {ascii_data}")
-
-async def find_device():
-    print("Scanning for BLE devices...")
-    while True:
-        devices = await BleakScanner.discover(timeout=5.0)
-        for d in devices:
-            if d.name == TARGET_NAME:
-                print(f"Found target: {d.name} [{d.address}]")
-                return d
-        print("Device not found, rescanning...")
-
-async def keep_alive(client: BleakClient):
-    """Optional keep-alive write to avoid idle disconnects."""
-    while True:
+def parse_notification(data: bytes):
+    hex_str = data.hex()
+    
+    # Check for text messages (prefix 24 = likely text)
+    if hex_str.startswith("24"):
+        # skip the first byte(s) (length/prefix), then decode UTF-8
         try:
-            if client.is_connected:
-                await client.write_gatt_char(UART_WRITE_UUID, bytes([0x01]), response=False)
+            # Assuming format: 24 + 0000 + length + text
+            # Find first non-zero after 24
+            text_bytes = bytes.fromhex(hex_str[8:])  # adjust if format differs
+            text = text_bytes.decode("utf-8")
+            print(f"[{CHAR_UUID}] Text: \"{text}\"")
         except Exception as e:
-            print(f"Keep-alive error: {e}")
-            break
-        await asyncio.sleep(KEEPALIVE_INTERVAL)
-
-async def subscribe_with_retry(client: BleakClient, uuid: str, max_retries=3):
-    for attempt in range(1, max_retries + 1):
-        try:
-            await client.start_notify(uuid, handle_notification)
-            print(f"Subscribed to {uuid}")
-            return True
-        except Exception as e:
-            print(f"Failed to subscribe to {uuid} (attempt {attempt}): {e}")
-            await asyncio.sleep(1)
-    print(f"Skipping {uuid} after {max_retries} failed attempts.")
-    return False
-
-async def connect_and_listen(device):
-    async with BleakClient(device.address) as client:
-        connected = client.is_connected
-        if not connected:
-            print("Failed to connect.")
-            return
-
-        print(f"Connected to {device.name}")
-
-        # Subscribe ASAP after connecting
-        await subscribe_with_retry(client, UART_NOTIFY_UUID)
-        await subscribe_with_retry(client, BATTERY_NOTIFY_UUID)
-
-        # Start keep-alive loop
-        asyncio.create_task(keep_alive(client))
-
-        # Print services once connected and stable
-        services = client.services  # no await needed, services are loaded after connection
-        print("Available services and characteristics:")
-        for s in services:
-            print(f"  Service {s.uuid}")
-            for c in s.characteristics:
-                print(f"    Characteristic {c.uuid} | Properties: {c.properties}")
-
-        print("Listening for notifications (Ctrl+C to stop)...")
-        while client.is_connected:
-            await asyncio.sleep(1)
-        print("Device disconnected.")
-
+            print(f"[{CHAR_UUID}] Text decode error: {e} - Raw: {hex_str}")
+    else:
+        # Treat as status/event code
+        code = hex_str[-4:]  # last 2 bytes as code
+        status = STATUS_CODES.get(code, "Unknown Status")
+        print(f"[{CHAR_UUID}] Status: 0x{code} -> {status}")
 
 async def main():
-    while True:
-        device = await find_device()
-        try:
-            await connect_and_listen(device)
-        except Exception as e:
-            print(f"Error: {e}. Reconnecting...")
+    print("Scanning...")
+    device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10.0)
+    if not device:
+        print("Device not found.")
+        return
+    
+    async with BleakClient(device) as client:
+        print(f"Connected to {DEVICE_NAME}")
+
+        def notification_handler(sender, data):
+            parse_notification(data)
+
+        await client.start_notify(CHAR_UUID, notification_handler)
+
+        # Send packets
+        for pkt in PACKETS:
+            print(f"Sending: {pkt}")
+            await client.write_gatt_char(CHAR_UUID, bytes.fromhex(pkt))
+        
+        print("All packets sent. Listening for notifications...")
+
+        # Keep listening for notifications for 30 seconds
+        await asyncio.sleep(30)
+        await client.stop_notify(CHAR_UUID)
+        print("Done.")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Exiting...")
+    asyncio.run(main())
