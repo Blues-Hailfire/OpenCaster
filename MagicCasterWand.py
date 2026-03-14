@@ -1,12 +1,11 @@
 import asyncio
-from bleak import BleakClient, BleakScanner
+from bleak import BleakClient
+from wand import WRITE_UUID, NOTIFY_UUID, find_wand
 
-DEVICE_NAME = "MCW-7DFE"
-SERVICE_UUID = "57420003-587e-48a0-974c-544d6163c577"
-CHAR_UUID = SERVICE_UUID  # Your characteristic for notifications
+# Packets to send on connect (write to WRITE_UUID, not notify char)
 PACKETS = ["021002", "02100a", "02100b"]
 
-# Map known status codes to human-readable
+# Map known status codes to human-readable labels
 STATUS_CODES = {
     "1000": "Ready / Idle",
     "1001": "Action Started",
@@ -21,52 +20,54 @@ STATUS_CODES = {
     "100f": "Unknown Event F",
 }
 
+
 def parse_notification(data: bytes):
     hex_str = data.hex()
-    
-    # Check for text messages (prefix 24 = likely text)
-    if hex_str.startswith("24"):
-        # skip the first byte(s) (length/prefix), then decode UTF-8
+
+    # Spell name: prefix byte 0x24, format 24 00 00 <len> <utf-8>
+    if data[0] == 0x24:
         try:
-            # Assuming format: 24 + 0000 + length + text
-            # Find first non-zero after 24
-            text_bytes = bytes.fromhex(hex_str[8:])  # adjust if format differs
-            text = text_bytes.decode("utf-8")
-            print(f"[{CHAR_UUID}] Text: \"{text}\"")
+            text = data[4:].decode("utf-8")
+            print(f"[notify] Spell: \"{text}\"")
         except Exception as e:
-            print(f"[{CHAR_UUID}] Text decode error: {e} - Raw: {hex_str}")
-    else:
-        # Treat as status/event code
-        code = hex_str[-4:]  # last 2 bytes as code
-        status = STATUS_CODES.get(code, "Unknown Status")
-        print(f"[{CHAR_UUID}] Status: 0x{code} -> {status}")
+            print(f"[notify] Spell decode error: {e} — raw: {hex_str}")
+        return
+
+    # Heartbeat: 01 40 01
+    if hex_str == "014001":
+        print("[notify] Heartbeat")
+        return
+
+    # Type A status event: exactly 2 bytes starting with 0x10
+    if data[0] == 0x10 and len(data) == 2:
+        status = STATUS_CODES.get(hex_str, f"Unknown (0x{hex_str})")
+        print(f"[notify] Status: {status}  ({hex_str})")
+        return
+
+    # Fallback
+    print(f"[notify] Raw: {hex_str}")
+
 
 async def main():
-    print("Scanning...")
-    device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10.0)
-    if not device:
-        print("Device not found.")
-        return
-    
-    async with BleakClient(device) as client:
-        print(f"Connected to {DEVICE_NAME}")
+    wand = await find_wand()
 
-        def notification_handler(sender, data):
-            parse_notification(data)
+    async with BleakClient(wand, timeout=20.0) as client:
+        print(f"Connected to {wand.name}")
+        await asyncio.sleep(2.0)
 
-        await client.start_notify(CHAR_UUID, notification_handler)
+        await client.start_notify(NOTIFY_UUID, lambda _s, d: parse_notification(d))
 
-        # Send packets
+        # Send packets to the write characteristic (not the notify one)
         for pkt in PACKETS:
             print(f"Sending: {pkt}")
-            await client.write_gatt_char(CHAR_UUID, bytes.fromhex(pkt))
-        
-        print("All packets sent. Listening for notifications...")
+            await client.write_gatt_char(WRITE_UUID, bytes.fromhex(pkt), response=False)
+            await asyncio.sleep(0.05)
 
-        # Keep listening for notifications for 30 seconds
+        print("Listening for notifications... (30 s)")
         await asyncio.sleep(30)
-        await client.stop_notify(CHAR_UUID)
+        await client.stop_notify(NOTIFY_UUID)
         print("Done.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
