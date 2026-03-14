@@ -32,7 +32,7 @@ from wand import (
     find_wand, hw_init, hw_write,
     build_frame, cmd_changeled, clear_all, buzz_frame, hsv_to_rgb,
 )
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 
 # ── Palette ────────────────────────────────────────────────────────────────────
 BG         = "#0a0c1a"   # deep space
@@ -135,11 +135,16 @@ def decode_notification(data: bytes) -> dict:
 # ── BLE background thread ──────────────────────────────────────────────────────
 
 class BLEWorker:
+    SCAN_TIMEOUT = 6.0
+
     def __init__(self, msg_queue: queue.Queue):
         self.q = msg_queue
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._client: Optional[BleakClient] = None
         self._stop = False
+        self._target_name: Optional[str] = None
+        self._target_address: Optional[str] = None
+        self._connect_event = asyncio.Event()   # set when a new target is chosen
 
     def start(self):
         t = threading.Thread(target=self._run, daemon=True)
@@ -153,19 +158,60 @@ class BLEWorker:
     def _run(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._connect_loop())
+        self._connect_event = asyncio.Event()   # create in the correct loop
+        self.loop.run_until_complete(self._idle_loop())
+
+    def scan_for_wands(self, callback):
+        """Start a BLE scan in a background thread; call callback(list[(name,addr)])."""
+        def _worker():
+            async def _scan():
+                devices = await BleakScanner.discover(timeout=self.SCAN_TIMEOUT)
+                return [(d.name, d.address)
+                        for d in devices if d.name and d.name.startswith("MCW")]
+            loop = asyncio.new_event_loop()
+            try:
+                results = loop.run_until_complete(_scan())
+            except Exception:
+                results = []
+            finally:
+                loop.close()
+            callback(results)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def connect_to(self, name: str, address: str):
+        """Tell the worker to connect to a specific wand (thread-safe)."""
+        self._target_name    = name
+        self._target_address = address
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._connect_event.set)
+
+    async def _idle_loop(self):
+        """Wait for a target then connect; reconnect if dropped."""
+        while not self._stop:
+            # Wait until the GUI picks a wand
+            await self._connect_event.wait()
+            self._connect_event.clear()
+            if self._stop:
+                break
+            await self._connect_loop()
 
     async def _connect_loop(self):
-        self.q.put({"type": "status_msg", "text": "Scanning for MCW wand..."})
+        self.q.put({"type": "status_msg",
+                    "text": f"Connecting to {self._target_name}…"})
         retry_delay = 2.0
         while not self._stop:
+            # If the user picks a different wand mid-retry, restart
+            if self._connect_event.is_set():
+                self._connect_event.clear()
+                self.q.put({"type": "status_msg",
+                            "text": f"Switching to {self._target_name}…"})
+                retry_delay = 2.0
+
             try:
-                wand = await find_wand()
-                self.q.put({"type": "status_msg", "text": f"Connecting to {wand.name}..."})
-                async with BleakClient(wand, timeout=20.0) as client:
+                async with BleakClient(self._target_address, timeout=20.0) as client:
                     self._client = client
-                    self.q.put({"type": "connected", "name": wand.name})
-                    retry_delay = 2.0  # reset backoff on successful connect
+                    self.q.put({"type": "connected", "name": self._target_name})
+                    retry_delay = 2.0
                     await asyncio.sleep(1.5)
                     await hw_init(client)
                     await self._welcome(client)
@@ -181,21 +227,30 @@ class BLEWorker:
                             lambda _s, d: self.q.put({"type": "battery", "pct": d[0]}))
                     except Exception:
                         pass
+                    # Stay connected until dropped or user picks new wand
                     while not self._stop and client.is_connected:
+                        if self._connect_event.is_set():
+                            break   # new wand chosen — drop this connection
                         await asyncio.sleep(0.5)
                     await client.stop_notify(NOTIFY_UUID)
                 self._client = None
                 self.q.put({"type": "disconnected"})
+                # If a new wand was chosen, hand control back to _idle_loop
+                if self._connect_event.is_set():
+                    return
                 if not self._stop:
-                    self.q.put({"type": "status_msg", "text": "Disconnected — rescanning..."})
+                    self.q.put({"type": "status_msg",
+                                "text": "Disconnected — reconnecting…"})
                     await asyncio.sleep(1.0)
             except Exception as e:
                 self._client = None
                 self.q.put({"type": "disconnected"})
                 self.q.put({"type": "status_msg", "text": f"Error: {e}"})
+                if self._connect_event.is_set():
+                    return
                 if not self._stop:
                     await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 1.5, 15.0)  # cap at 15s
+                    retry_delay = min(retry_delay * 1.5, 15.0)
 
     async def _welcome(self, client):
         """Rainbow + two buzzes on connect."""
@@ -238,6 +293,18 @@ class WandGUI:
     LOG_MAX    = 200
     TRAIL_MAX  = 512
 
+    # ── IMU filtering constants (accel trail only — grip codes are always raw) ─
+    # EMA smoothing factor: 0.0 = frozen, 1.0 = no smoothing.
+    IMU_ALPHA     = 0.4
+    # Dead-zone: smoothed accel below this (raw units) is ignored as stillness.
+    IMU_DEAD_ZONE = 150
+    # Velocity integration: accel is scaled before adding to velocity.
+    # Lower = slower/tighter strokes; higher = bigger sweeping shapes.
+    ACCEL_SCALE   = 0.004
+    # Velocity damping per sample: 1.0 = no damping, 0.0 = instant stop.
+    # 0.85 lets momentum carry through a stroke but kills decel bounce-back.
+    VEL_DAMPING   = 0.85
+
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("✦ OpenCaster — Magic Wand Monitor")
@@ -249,16 +316,34 @@ class WandGUI:
         self.ble = BLEWorker(self.q)
 
         self.battery_pct   = tk.StringVar(value="—")
-        self.status_var    = tk.StringVar(value="Disconnected")
+        self.status_var    = tk.StringVar(value="Select a wand and press Connect")
         self.conn_color    = tk.StringVar(value=RED)
         self.last_spell    = tk.StringVar(value="—")
         self.spell_history: list[str] = []
+
+        # Wand selector state
+        self._found_wands: dict = {}          # address → name
+        self._scanning    = False
+        self._wand_var    = tk.StringVar(value="")
 
         # Gesture trail buffers — X (accel X) and Y (accel Y), matching app's 2D view
         self.trail_x: deque = deque(maxlen=self.TRAIL_MAX)
         self.trail_y: deque = deque(maxlen=self.TRAIL_MAX)
         self.gesture_active = False
         self.frozen_trail: Optional[tuple] = None   # (x, y, spell) after cast
+
+        # Grip / sensor circle state
+        self._grip_active   = False          # True while wand is gripped (1008 on)
+        self._sensor_level  = 0             # 0-4: how many circles are lit
+
+        # EMA filter state (reset each gesture window)
+        self._ema_x: Optional[float] = None
+        self._ema_y: Optional[float] = None
+        # Velocity integration state (reset each gesture window)
+        self._vel_x: float = 0.0
+        self._vel_y: float = 0.0
+        self._pos_x: float = 0.0
+        self._pos_y: float = 0.0
 
         self._build_ui()
         self.ble.start()
@@ -275,15 +360,52 @@ class WandGUI:
         tk.Label(hdr, text="Magic Wand Monitor", bg=BG, fg=TEXT_DIM,
                  font=("Georgia", 11, "italic")).pack(side="left", padx=(10, 0), pady=(6, 0))
 
+        # ── Right side: battery + conn dot + wand selector ────────────────────
         right_hdr = tk.Frame(hdr, bg=BG)
         right_hdr.pack(side="right")
-        tk.Label(right_hdr, text="🔋", bg=BG, fg=TEXT_DIM, font=("Segoe UI", 11)).pack(side="left")
+
+        # Battery + connection dot
+        tk.Label(right_hdr, text="🔋", bg=BG, fg=TEXT_DIM,
+                 font=("Segoe UI", 11)).pack(side="left")
         tk.Label(right_hdr, textvariable=self.battery_pct, bg=BG, fg=GREEN,
                  font=("Courier New", 11, "bold")).pack(side="left", padx=(2, 16))
-        self._conn_dot = tk.Label(right_hdr, text="⬤", bg=BG, fg=RED, font=("Segoe UI", 14))
+        self._conn_dot = tk.Label(right_hdr, text="⬤", bg=BG, fg=RED,
+                                   font=("Segoe UI", 14))
         self._conn_dot.pack(side="left")
         tk.Label(right_hdr, textvariable=self.status_var, bg=BG, fg=TEXT_DIM,
-                 font=("Courier New", 10)).pack(side="left", padx=(6, 0))
+                 font=("Courier New", 10)).pack(side="left", padx=(6, 16))
+
+        # Wand selector: [Scan] [▾ dropdown] [Connect]
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Wand.TCombobox",
+                        fieldbackground=BG3, background=BG3,
+                        foreground=TEXT, selectbackground=BG3,
+                        selectforeground=TEXT, arrowcolor=GOLD_DIM,
+                        bordercolor=BORDER, lightcolor=BORDER,
+                        darkcolor=BORDER)
+        style.map("Wand.TCombobox",
+                  fieldbackground=[("readonly", BG3)],
+                  selectbackground=[("readonly", BG3)])
+
+        self._scan_btn = tk.Button(
+            right_hdr, text="Scan", bg=BG3, fg=TEXT_DIM, bd=0,
+            padx=10, pady=3, font=("Courier New", 9),
+            activebackground=BORDER, command=self._do_scan)
+        self._scan_btn.pack(side="left", padx=(0, 4))
+
+        self._wand_combo = ttk.Combobox(
+            right_hdr, textvariable=self._wand_var,
+            style="Wand.TCombobox", state="readonly",
+            width=18, font=("Courier New", 9))
+        self._wand_combo["values"] = ["— no wands found —"]
+        self._wand_combo.pack(side="left", padx=(0, 4))
+
+        self._conn_btn = tk.Button(
+            right_hdr, text="Connect", bg=GOLD_DIM, fg=BG, bd=0,
+            padx=10, pady=3, font=("Courier New", 9, "bold"),
+            activebackground=GOLD, command=self._do_connect)
+        self._conn_btn.pack(side="left")
 
         sep = tk.Frame(self.root, bg=BORDER, height=1)
         sep.pack(fill="x", padx=16, pady=8)
@@ -372,7 +494,34 @@ class WandGUI:
     def _build_status_panel(self, body):
         panel = self._panel(body, 2, "STATUS")
 
-        # Last spell big display
+        # ── Grip indicator ────────────────────────────────────────────────────
+        grip_frame = tk.Frame(panel, bg=BG2)
+        grip_frame.pack(fill="x", padx=10, pady=(8, 0))
+        tk.Label(grip_frame, text="GRIP", bg=BG2, fg=GOLD_DIM,
+                 font=("Georgia", 7, "bold")).pack(side="left", padx=(4, 8))
+        self._grip_dot = tk.Label(grip_frame, text="⬤", bg=BG2, fg=TEXT_DIM,
+                                   font=("Segoe UI", 13))
+        self._grip_dot.pack(side="left")
+        self._grip_label = tk.Label(grip_frame, text="not gripped", bg=BG2,
+                                     fg=TEXT_DIM, font=("Courier New", 8))
+        self._grip_label.pack(side="left", padx=(6, 0))
+
+        # ── Four sensor circles ───────────────────────────────────────────────
+        tk.Label(panel, text="SENSORS", bg=BG2, fg=GOLD_DIM,
+                 font=("Georgia", 7, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+
+        circles_frame = tk.Frame(panel, bg=BG2)
+        circles_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+        self._sensor_canvas = tk.Canvas(circles_frame, bg=BG2, bd=0,
+                                         highlightthickness=0, height=52)
+        self._sensor_canvas.pack(fill="x")
+
+        # We'll draw the circles after the widget is mapped so we know the width
+        self._sensor_circles = []   # canvas item ids
+        self._sensor_canvas.bind("<Configure>", self._on_sensor_canvas_resize)
+
+        # ── Last spell big display ────────────────────────────────────────────
         spell_frame = tk.Frame(panel, bg=BG3, pady=12)
         spell_frame.pack(fill="x", padx=10, pady=(8, 0))
         tk.Label(spell_frame, text="LAST SPELL", bg=BG3, fg=GOLD_DIM,
@@ -396,6 +545,102 @@ class WandGUI:
         self._imu_label = tk.Label(panel, text="—", bg=BG2, fg=BLUE_GLOW,
                                     font=("Courier New", 8), wraplength=220, justify="left")
         self._imu_label.pack(anchor="w", padx=14, pady=(0, 8))
+
+    def _on_sensor_canvas_resize(self, event):
+        """Redraw sensor circles whenever the canvas is resized."""
+        self._draw_sensor_circles(self._sensor_level)
+
+    def _draw_sensor_circles(self, level: int):
+        """Draw 4 circles; the first `level` are lit, the rest are dim."""
+        c = self._sensor_canvas
+        c.delete("all")
+        self._sensor_circles = []
+
+        w = c.winfo_width()
+        if w < 10:
+            return  # not yet mapped
+
+        n      = 4
+        r      = 18          # radius
+        gap    = 10
+        total  = n * r * 2 + (n - 1) * gap
+        start  = (w - total) // 2
+        cy     = 26          # vertical centre
+
+        lit_colors = [GREEN, BLUE_GLOW, GOLD, PURPLE]   # one per circle
+        dim_color  = BG3
+        dim_outline = BORDER
+        lit_outline = BG2
+
+        for i in range(n):
+            cx  = start + i * (r * 2 + gap) + r
+            x0, y0 = cx - r, cy - r
+            x1, y1 = cx + r, cy + r
+            lit = i < level
+            fill    = lit_colors[i] if lit else dim_color
+            outline = lit_outline   if lit else dim_outline
+            # Glow halo for lit circles
+            if lit:
+                hr = r + 4
+                c.create_oval(cx - hr, cy - hr, cx + hr, cy + hr,
+                              fill="", outline=fill, width=2)
+            oid = c.create_oval(x0, y0, x1, y1, fill=fill,
+                                outline=outline, width=1)
+            self._sensor_circles.append(oid)
+
+    def _set_grip(self, active: bool):
+        self._grip_active = active
+        if active:
+            self._grip_dot.configure(fg=GREEN)
+            self._grip_label.configure(text="gripped", fg=GREEN)
+        else:
+            self._grip_dot.configure(fg=TEXT_DIM)
+            self._grip_label.configure(text="not gripped", fg=TEXT_DIM)
+            # Also reset circles when grip is released
+            self._sensor_level = 0
+            self._draw_sensor_circles(0)
+
+    def _set_sensor_level(self, level: int):
+        self._sensor_level = max(0, min(4, level))
+        self._draw_sensor_circles(self._sensor_level)
+
+    # ── Wand selector logic ────────────────────────────────────────────────────
+
+    def _do_scan(self):
+        if self._scanning:
+            return
+        self._scanning = True
+        self._scan_btn.configure(text="Scanning…", state="disabled", fg=GOLD_DIM)
+        self._wand_combo["values"] = ["Scanning…"]
+        self._wand_var.set("Scanning…")
+        self.ble.scan_for_wands(lambda results: self.root.after(0, self._on_scan_done, results))
+
+    def _on_scan_done(self, results: list):
+        self._scanning = False
+        self._scan_btn.configure(text="Scan", state="normal", fg=TEXT_DIM)
+
+        for name, addr in results:
+            self._found_wands[addr] = name
+
+        if not self._found_wands:
+            self._wand_combo["values"] = ["— no wands found —"]
+            self._wand_var.set("— no wands found —")
+            return
+
+        labels = [f"{name}  ({addr})"
+                  for addr, name in sorted(self._found_wands.items())]
+        self._wand_combo["values"] = labels
+        self._wand_var.set(labels[0])
+
+    def _do_connect(self):
+        label = self._wand_var.get()
+        # Find address embedded in the label "MCW-XXXX  (AA:BB:...)"
+        for addr, name in self._found_wands.items():
+            if addr in label:
+                self.root.title(f"✦ OpenCaster — {name}")
+                self.ble.connect_to(name, addr)
+                return
+        self.status_var.set("Select a wand from the dropdown first")
 
     # ── Event polling ──────────────────────────────────────────────────────────
 
@@ -431,12 +676,30 @@ class WandGUI:
 
         code = dec.get("code")
 
-        # Gesture window open — start collecting trail, glow blue
+        # ── Grip detection ────────────────────────────────────────────────────
+        if code == "1008":                      # grip on
+            self._set_grip(True)
+            self._set_sensor_level(1)
+        elif code == "1009":                    # grip deepening
+            if self._grip_active:
+                self._set_sensor_level(2)
+        elif code == "100a":                    # sensor zone 3
+            if self._grip_active:
+                self._set_sensor_level(3)
+
+        # ── Gesture window open — start collecting trail, glow blue ──────────
         if code == "100b":
             self.gesture_active = True
             self.trail_x.clear(); self.trail_y.clear()
             self.frozen_trail = None
+            self._ema_x = None
+            self._ema_y = None
+            self._vel_x = 0.0
+            self._vel_y = 0.0
+            self._pos_x = 0.0
+            self._pos_y = 0.0
             self._gesture_label.configure(text="● gesture window open", fg=GOLD)
+            self._set_sensor_level(4)           # all four lit = fully gripped
             self.ble.trigger_blue()
 
         # IMU samples arrive on IMU_UUID, handled by _handle_imu
@@ -453,9 +716,11 @@ class WandGUI:
             self._redraw_trail(frozen=True)
 
         # Gesture close / ack / idle — clear LEDs, stop trail
-        if code in ("100f", "1002"):
+        if code in ("100f", "1002", "1000"):
             self.gesture_active = False
             self.ble.trigger_clear()
+            if code == "1000":                  # full idle — release grip too
+                self._set_grip(False)
             if code == "100f" and not self.frozen_trail:
                 self._gesture_label.configure(
                     text="gesture window closed", fg=TEXT_DIM)
@@ -466,14 +731,44 @@ class WandGUI:
             return
         ax, ay, az = samples[0]
         self._imu_label.configure(text=f"ax={ax:6d}  ay={ay:6d}  az={az:6d}")
-        # Feed all 19 samples into trail whenever gesture window is open
         if self.gesture_active:
             for ax, ay, az in samples:
-                self.trail_x.append(ax)
-                self.trail_y.append(az)   # az = up/down, best for gesture shape
+                raw_x, raw_y = float(ax), float(az)
+
+                # ── EMA smoothing ─────────────────────────────────────────────
+                if self._ema_x is None:
+                    self._ema_x, self._ema_y = raw_x, raw_y
+                else:
+                    a = self.IMU_ALPHA
+                    self._ema_x = a * raw_x + (1 - a) * self._ema_x
+                    self._ema_y = a * raw_y + (1 - a) * self._ema_y
+
+                # ── Dead-zone: ignore near-zero accel (true stillness) ────────
+                if (abs(self._ema_x) < self.IMU_DEAD_ZONE and
+                        abs(self._ema_y) < self.IMU_DEAD_ZONE):
+                    # Still dampen velocity so we don't drift on release
+                    self._vel_x *= self.VEL_DAMPING
+                    self._vel_y *= self.VEL_DAMPING
+                    continue
+
+                # ── Integrate accel → velocity, damp to limit decel bounce ────
+                self._vel_x = self._vel_x * self.VEL_DAMPING + self._ema_x * self.ACCEL_SCALE
+                self._vel_y = self._vel_y * self.VEL_DAMPING + self._ema_y * self.ACCEL_SCALE
+
+                # ── Integrate velocity → position ─────────────────────────────
+                self._pos_x += self._vel_x
+                self._pos_y += self._vel_y
+
+                self.trail_x.append(self._pos_x)
+                self.trail_y.append(self._pos_y)
             self._redraw_trail()
 
     def _log_event(self, dec: dict):
+        # Skip heartbeats and raw IMU burst packets — noise in the event log
+        if dec.get("type") == "heartbeat":
+            return
+        if dec.get("type") == "unknown" and len(dec.get("raw", "")) > 16:
+            return
         box = self._log_box
         box.configure(state="normal")
         ts   = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -530,6 +825,9 @@ class WandGUI:
         # Start dot (dim) and end dot (gold)
         ax.scatter([xs[0]],  [ys[0]],  color=TEXT_DIM, s=25, zorder=5)
         ax.scatter([xs[-1]], [ys[-1]], color=GOLD,     s=45, zorder=6)
+
+        ax.set_xlim(-10000, 10000)
+        ax.set_ylim(-10000, 10000)
 
         if spell:
             ax.set_title(spell, color=PURPLE, fontsize=10, pad=6, fontfamily="serif")
