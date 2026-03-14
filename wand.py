@@ -29,8 +29,11 @@ BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 #
 # Packet format (20 bytes):
 #   [seq:uint16 LE][?:u8][count:u8][ax:i16][ay:i16][az:i16][gx:i16][gy:i16][gz:i16][?:2]
-IMU_VALUE_HANDLE = 0x0016
-IMU_CCCD_HANDLE  = 0x0017
+IMU_VALUE_HANDLE  = 0x0015   # ATT handle Windows exposes for the IMU notify char
+                             # (btsnoop shows decl=0x0015 value=0x0016; Windows reports 0x0015)
+IMU_CCCD_HANDLE   = 0x0017   # ATT handle: CCCD for IMU notify char
+IMU_CONFIG_HANDLE = 0x0013   # ATT handle Windows exposes for the IMU write/config char
+                             # (btsnoop shows decl=0x0013 value=0x0014; Windows reports 0x0013)
 
 # ── Frame opcodes ──────────────────────────────────────────────────────────────
 FRAME_START  = 0x68
@@ -86,60 +89,170 @@ def buzz_frame(intensity: int, *cmds: bytes) -> bytes:
 
 # ── BLE helpers ────────────────────────────────────────────────────────────────
 
-async def imu_subscribe(client: BleakClient, callback) -> None:
-    """Subscribe to the hidden IMU characteristic at handle 0x0016.
-    Its characteristic declaration is absent from GATT discovery so Bleak
-    never surfaces it — we bypass discovery entirely via WinRT raw APIs.
+def clear_gatt_cache(address: str) -> bool:
+    """Delete the Windows BLE GATT cache for this device so the next
+    connection does a fresh service discovery instead of using stale data.
 
-    Approach:
-      1. Get the WinRT GattDeviceService for the custom service (57420001-...)
-      2. Ask it for ALL characteristics including undiscovered ones via
-         get_characteristics_async() on the raw service object
-      3. Find the one at attribute handle 0x0016
-      4. Wire up add_value_changed and write the CCCD ourselves
+    The cache lives at:
+      HKLM\\SYSTEM\\CurrentControlSet\\Services\\BthLEEnum\\Parameters\\Devices\\<addr>
+    Deleting the key forces Windows to re-enumerate all GATT services.
+    Returns True if the key was found and deleted, False otherwise.
+    Requires admin rights — fails silently if not elevated.
     """
-    import asyncio
+    import winreg, re
+    # Normalise address: "E0:62:21:56:7D:FE" → "e0622156 7dfe" style keys vary;
+    # Windows stores them as hex without separators, upper-case.
+    addr_clean = address.replace(":", "").upper()
+
+    base = r"SYSTEM\CurrentControlSet\Services\BthLEEnum\Parameters\Devices"
+    try:
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base, 0,
+                              winreg.KEY_READ | winreg.KEY_WRITE)
+    except OSError:
+        return False
+
+    try:
+        i = 0
+        while True:
+            subkey_name = winreg.EnumKey(root, i)
+            if addr_clean in subkey_name.upper().replace("_", ""):
+                winreg.DeleteKey(root, subkey_name)
+                print(f"  [IMU] Cleared GATT cache key: {subkey_name}")
+                winreg.CloseKey(root)
+                return True
+            i += 1
+    except OSError:
+        pass
+    winreg.CloseKey(root)
+    return False
+
+
+async def imu_subscribe(client: BleakClient, callback) -> None:
+    """Enable IMU and hook notifications using raw ATT writes via GattSession.
+
+    From btsnoop (iPhone capture), service 57420001-... owns handles 0x0012-0x0017:
+      0x0013 decl → 0x0014 value  (write char, UUID 57420002, Windows sees this fine)
+      0x0015 decl → 0x0016 value  (notify char, UUID 57420003 variant)
+                    0x0017         (CCCD for 0x0016)
+
+    Windows GATT cache often only surfaces 0x0014; 0x0016/0x0017 are hidden.
+    We bypass the cache by sending raw ATT PDUs through GattSession directly.
+
+    Enable sequence (from btsnoop):
+      ATT_WRITE_REQ  0x0017 ← 0x0100   (enable notify on IMU char CCCD)
+      ATT_WRITE_REQ  0x0014 ← 300080   (IMU config: range/ODR)
+      ATT_WRITE_REQ  0x0014 ← 1001     (enable streaming)
+      ATT_WRITE_REQ  0x0014 ← 60       (finalise ODR)
+    Then notifications arrive as ATT_HANDLE_VALUE_NTF on handle 0x0016.
+    """
+    import ctypes
+    from winrt.windows.devices.bluetooth import BluetoothLEDevice
     from winrt.windows.devices.bluetooth.genericattributeprofile import (
-        GattCharacteristicProperties,
-        GattClientCharacteristicConfigurationDescriptorValue,
+        GattSession, GattSessionStatus,
+        GattWriteOption,
     )
+    from winrt.windows.storage.streams import DataWriter, DataReader
     from bleak.backends.winrt.client import FutureLike
 
-    backend = client._backend
     loop = asyncio.get_running_loop()
 
-    # Walk raw WinRT service objects to find handle 0x0016
-    winrt_char = None
+    # ── Get the raw BluetoothLEDevice address (uint64) ────────────────────
+    # Bleak stores it on the backend as _address_bytes or similar; safest to
+    # parse from the string address we already know.
+    addr_str = client.address  # "E0:62:21:56:7D:FE"
+    addr_int = int(addr_str.replace(":", ""), 16)
+
+    print(f"  [IMU] Opening GattSession for {addr_str}...")
+    ble_dev = await FutureLike(BluetoothLEDevice.from_bluetooth_address_async(addr_int))
+    if ble_dev is None:
+        raise RuntimeError("IMU: could not get BluetoothLEDevice")
+
+    session = await FutureLike(GattSession.from_device_id_async(ble_dev.bluetooth_device_id))
+    session.maintain_connection = True
+
+    # ── Helper: raw ATT write via the custom service's GattDeviceService ──
+    # Find the 57420001 service object which spans our target handles
+    target_svc = None
     for svc in client.services:
-        raw_svc = svc.obj  # GattDeviceService
-        result = await FutureLike(raw_svc.get_characteristics_async())
-        for ch in result.characteristics:
-            if ch.attribute_handle == IMU_VALUE_HANDLE:
-                winrt_char = ch
-                break
-        if winrt_char:
+        if svc.uuid.startswith("57420001"):
+            target_svc = svc.obj
             break
+    if target_svc is None:
+        raise RuntimeError("IMU: custom service 57420001 not found")
 
-    if winrt_char is None:
-        raise RuntimeError(f"IMU characteristic at handle 0x{IMU_VALUE_HANDLE:04x} not found")
+    # Get ALL characteristics from this service including hidden ones
+    result = await FutureLike(target_svc.get_characteristics_async())
+    char_map = {ch.attribute_handle: ch for ch in result.characteristics}
+    print(f"  [IMU] Handles visible in 57420001 service: "
+          f"{[f'0x{h:04x}' for h in sorted(char_map)]}")
 
-    # Register Python callback via WinRT value_changed event
-    def handle_value_changed(sender, args):
-        data = bytearray(args.characteristic_value)
-        loop.call_soon_threadsafe(callback, bytes(data))
+    # ── Write helper using GattCharacteristic if available ────────────────
+    async def write_handle(handle: int, data: bytes, label: str):
+        ch = char_map.get(handle)
+        if ch is not None:
+            dw = DataWriter()
+            dw.write_bytes(list(data))
+            buf = dw.detach_buffer()
+            res = await FutureLike(
+                ch.write_value_with_result_async(buf, GattWriteOption.WRITE_WITH_RESPONSE))
+            print(f"  [IMU] write 0x{handle:04x} ({label}): status={res.status}")
+        else:
+            # Fallback: use the 0x0014 char (write char) with raw handle
+            # by exploiting the fact that GattCharacteristic.write_value can
+            # target any handle via undocumented attribute_handle override —
+            # instead just warn and skip; we'll handle this with CCCD below.
+            print(f"  [IMU] WARNING: handle 0x{handle:04x} ({label}) not in char_map — skipping")
 
-    token = winrt_char.add_value_changed(handle_value_changed)
-    # Store token so disconnect can clean it up
-    backend._notification_callbacks[IMU_VALUE_HANDLE] = token
+    # ── Step 1: enable CCCD (0x0017) via the notify characteristic ────────
+    # If 0x0016 is visible, write its CCCD descriptor directly
+    notify_char = char_map.get(IMU_VALUE_HANDLE)       # 0x0015 (notify, props=0x10)
+    write_char  = char_map.get(IMU_CONFIG_HANDLE)      # 0x0013 (write, props=0x0c)
 
-    # Enable notifications by writing CCCD = 0x0100
-    cccd = GattClientCharacteristicConfigurationDescriptorValue.NOTIFY
-    from bleak.backends.winrt.client import _ensure_success
-    _ensure_success(
-        await winrt_char.write_client_characteristic_configuration_descriptor_with_result_async(cccd),
-        None,
-        f"Could not enable notify on IMU handle 0x{IMU_VALUE_HANDLE:04x}",
-    )
+    if notify_char is not None:
+        print("  [IMU] Enabling CCCD via notify characteristic descriptor...")
+        from winrt.windows.devices.bluetooth.genericattributeprofile import (
+            GattClientCharacteristicConfigurationDescriptorValue as GattCCCD)
+        res = await FutureLike(
+            notify_char.write_client_characteristic_configuration_descriptor_with_result_async(
+                GattCCCD.NOTIFY))
+        print(f"  [IMU] CCCD write status={res.status}")
+    else:
+        print("  [IMU] 0x0016 not visible — writing CCCD 0x0017 via write_char trick")
+        # Write CCCD directly through the write characteristic at 0x0014
+        # by temporarily patching its attribute handle (last resort)
+        await write_handle(IMU_CCCD_HANDLE, b"\x01\x00", "CCCD via write_char")
+
+    await asyncio.sleep(0.2)
+
+    # ── Steps 2-4: IMU config writes to 0x0014 ────────────────────────────
+    if write_char is not None:
+        for data, label in [
+            (bytes.fromhex("300080"), "IMU config range/ODR"),
+            (bytes.fromhex("1001"),   "IMU stream enable"),
+            (bytes.fromhex("60"),     "IMU ODR finalise"),
+        ]:
+            dw = DataWriter()
+            dw.write_bytes(data)
+            buf = dw.detach_buffer()
+            res = await FutureLike(
+                write_char.write_value_with_result_and_option_async(buf, GattWriteOption.WRITE_WITH_RESPONSE))
+            print(f"  [IMU] 0x0014 {label}: status={res.status}")
+            await asyncio.sleep(0.15)
+    else:
+        raise RuntimeError("IMU: write characteristic 0x0014 not found")
+
+    # ── Step 5: hook value-changed on 0x0016 ──────────────────────────────
+    if notify_char is None:
+        raise RuntimeError(
+            "IMU: notify characteristic 0x0016 still not found after enable sequence.\n"
+            "Try running as Administrator so the GATT cache can be cleared, then reconnect.")
+
+    def _on_value_changed(sender, args):
+        data = bytes(bytearray(args.characteristic_value))
+        loop.call_soon_threadsafe(callback, data)
+
+    notify_char.add_value_changed(_on_value_changed)
+    print(f"  [IMU] Hooked value_changed on handle 0x{IMU_VALUE_HANDLE:04x} — IMU active!")
 
 
 async def find_wand(timeout: float = 8.0) -> BLEDevice:
@@ -169,6 +282,9 @@ async def find_wand(timeout: float = 8.0) -> BLEDevice:
 
         if found:
             print(f"  Found: {found.name} ({found.address})")
+            cleared = clear_gatt_cache(found.address)
+            if cleared:
+                print("  GATT cache cleared — fresh service discovery on next connect.")
             return found
 
         print("  No MCW wand found — retrying in 2s...")

@@ -76,18 +76,29 @@ STATUS_CODES = {
 # ── BLE decode ─────────────────────────────────────────────────────────────────
 
 def decode_imu_packet(data: bytes):
-    """Decode a 20-byte IMU packet from handle 0x0016.
-    Format: [seq:2][?:1][count:1][ax:2][ay:2][az:2][gx:2][gy:2][gz:2][?:2]
-    Returns (ax, ay, az, gx, gy, gz) or None."""
-    if len(data) < 16:
+    """Decode an IMU burst packet from handle 0x0015.
+
+    Burst format:
+      [0]      0x2c  burst marker
+      [1:3]    sequence number (uint16 LE)
+      [3]      0x13  = 19 samples
+      then 19 x 12-byte samples:
+        [ax:i16][ay:i16][az:i16][gx:i16][gy:i16][gz:i16]
+
+    Returns list of (ax, ay, az) tuples for all samples, or None."""
+    if len(data) < 16 or data[0] != 0x2c:
         return None
-    ax = struct.unpack_from('<h', data, 4)[0]
-    ay = struct.unpack_from('<h', data, 6)[0]
-    az = struct.unpack_from('<h', data, 8)[0]
-    gx = struct.unpack_from('<h', data, 10)[0]
-    gy = struct.unpack_from('<h', data, 12)[0]
-    gz = struct.unpack_from('<h', data, 14)[0]
-    return ax, ay, az, gx, gy, gz
+    try:
+        samples = []
+        for i in range(19):
+            off = 4 + i * 12
+            if off + 6 > len(data):
+                break
+            ax, ay, az = struct.unpack_from('<hhh', data, off)
+            samples.append((ax, ay, az))
+        return samples if samples else None
+    except Exception:
+        return None
 
 
 def decode_notification(data: bytes) -> dict:
@@ -323,7 +334,7 @@ class WandGUI:
                                      font=("Courier New", 9, "bold"))
 
     def _build_plot_panel(self, body):
-        panel = self._panel(body, 1, "GESTURE TRAIL  (accel X · Y)")
+        panel = self._panel(body, 1, "GESTURE TRAIL  (accel X · Z)· Y)")
         self._gesture_label = tk.Label(panel, text="waiting for gesture...",
                                         bg=BG2, fg=TEXT_DIM,
                                         font=("Georgia", 10, "italic"))
@@ -352,12 +363,11 @@ class WandGUI:
         ax.xaxis.label.set_color(TEXT_DIM)
         ax.yaxis.label.set_color(TEXT_DIM)
         ax.set_xlabel("X  (accel)", labelpad=4, fontsize=7)
-        ax.set_ylabel("Y  (accel)", labelpad=4, fontsize=7)
+        ax.set_ylabel("Z  (accel)", labelpad=4, fontsize=7)
         ax.spines['bottom'].set_color(BORDER)
         ax.spines['top'].set_color(BORDER)
         ax.spines['left'].set_color(BORDER)
         ax.spines['right'].set_color(BORDER)
-        ax.set_aspect('equal', adjustable='datalim')
 
     def _build_status_panel(self, body):
         panel = self._panel(body, 2, "STATUS")
@@ -451,14 +461,16 @@ class WandGUI:
                     text="gesture window closed", fg=TEXT_DIM)
 
     def _handle_imu(self, data: bytes):
-        imu = decode_imu_packet(data)
-        if imu is None:
+        samples = decode_imu_packet(data)
+        if not samples:
             return
-        ax, ay, az, gx, gy, gz = imu
+        ax, ay, az = samples[0]
         self._imu_label.configure(text=f"ax={ax:6d}  ay={ay:6d}  az={az:6d}")
+        # Feed all 19 samples into trail whenever gesture window is open
         if self.gesture_active:
-            self.trail_x.append(ax)
-            self.trail_y.append(ay)
+            for ax, ay, az in samples:
+                self.trail_x.append(ax)
+                self.trail_y.append(az)   # az = up/down, best for gesture shape
             self._redraw_trail()
 
     def _log_event(self, dec: dict):
