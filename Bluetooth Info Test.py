@@ -21,6 +21,7 @@ import argparse
 import csv
 import json
 import signal
+import struct
 from collections import defaultdict
 from datetime import datetime
 from bleak import BleakScanner, BleakClient
@@ -85,6 +86,7 @@ def decode_notification(data: bytes) -> dict:
         "raw": hex_str, "bytes": list(data),
         "type": "unknown", "code": None,
         "label": None, "category": None, "text": None,
+        "imu": None,
     }
     if hex_str == "014001":
         result.update(type="heartbeat", label="Periodic heartbeat", category="system")
@@ -96,10 +98,18 @@ def decode_notification(data: bytes) -> dict:
         except (UnicodeDecodeError, IndexError):
             result.update(type="spell_raw", label="Spell (decode error)", category="spell")
         return result
-    if data[0] == 0x10 and len(data) == 2:
-        code = hex_str
+    if data[0] == 0x10 and len(data) >= 2:
+        code = data[:2].hex()
         label, category = STATUS_CODES.get(code, (f"Unknown 0x{code}", "unknown"))
         result.update(type="status", code=code, label=label, category=category)
+
+        # IMU packets carry additional signed int16 LE samples after the 2-byte code
+        if data[1] in (0x08, 0x09, 0x0a) and len(data) > 2:
+            payload = data[2:]
+            samples = [struct.unpack_from('<h', payload, i)[0]
+                       for i in range(0, len(payload) - 1, 2)]
+            result["imu"] = samples
+            result["label"] = f"{label}  [{', '.join(str(s) for s in samples[:6])}]"
         return result
     return result
 
@@ -146,6 +156,21 @@ async def wand_hello(client: BleakClient) -> None:
     await hw_write(client, clear)
     await hw_write(client, bytes([0x40]))
     await asyncio.sleep(0.3)
+
+    # Short buzz
+    await hw_write(client, bytes([0x60]))
+    await hw_write(client, buzz_frame(100))
+    await asyncio.sleep(0.15)
+    await hw_write(client, bytes([0x40]))
+    await asyncio.sleep(0.25)
+
+    # Long buzz
+    await hw_write(client, bytes([0x60]))
+    await hw_write(client, buzz_frame(100))
+    await asyncio.sleep(0.4)
+    await hw_write(client, bytes([0x40]))
+    await asyncio.sleep(0.2)
+
     print(color("  ✦ Ready.\n", "purple"))
 
 
@@ -428,11 +453,8 @@ async def _gesture_buzz_sustained(client: BleakClient, stop_event: asyncio.Event
 async def mode_listen(client: BleakClient, log_file: str = "mcw_listen.csv"):
     print(color("\n[listen] Passive capture — Ctrl+C to stop\n", "bold"))
     rows = []
-    gesture_stop: Optional[asyncio.Event] = None
-    buzz_task:    Optional[asyncio.Task]  = None
 
     def handler(_sender, data):
-        nonlocal gesture_stop, buzz_task
         decoded = decode_notification(data)
         pretty_print(decoded)
         rows.append({
@@ -440,33 +462,27 @@ async def mode_listen(client: BleakClient, log_file: str = "mcw_listen.csv"):
             "raw": decoded["raw"], "type": decoded["type"],
             "category": decoded["category"], "label": decoded["label"],
             "spell": decoded.get("text", ""),
+            "imu": json.dumps(decoded["imu"]) if decoded.get("imu") else "",
         })
 
         code = decoded.get("code")
 
-        # Gesture window open — start sustained buzz
+        # Gesture window open — glow blue
         if code == "100b":
-            if buzz_task is None or buzz_task.done():
-                gesture_stop = asyncio.Event()
-                buzz_task = asyncio.ensure_future(
-                    _gesture_buzz_sustained(client, gesture_stop)
-                )
+            blue_frame = build_frame(*[cmd_changeled(grp, 0, 0, 255, 2000) for grp in range(4)])
+            asyncio.ensure_future(client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False))
+            asyncio.ensure_future(client.write_gatt_char(WRITE_UUID, blue_frame, response=False))
 
-        # Gesture window close OR idle/ready — stop sustained buzz
-        elif code in ("100f", "1000"):
-            if gesture_stop is not None:
-                gesture_stop.set()
-                gesture_stop = None
-                buzz_task    = None
+        # Gesture window close or Action Ack/End — clear LEDs
+        elif code in ("100f", "1002"):
+            clear_frame = build_frame(*[cmd_changeled(grp, 0, 0, 0, 300) for grp in range(4)])
+            asyncio.ensure_future(client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False))
+            asyncio.ensure_future(client.write_gatt_char(WRITE_UUID, clear_frame, response=False))
+            asyncio.ensure_future(client.write_gatt_char(WRITE_UUID, bytes([0x40]), response=False))
 
     await client.start_notify(NOTIFY_UUID, handler)
     await client.start_notify(BATTERY_UUID, lambda _s, d: print(color(f"  Battery: {d[0]}%", "green")))
     await _stop.wait()
-    # Stop any in-progress gesture buzz
-    if gesture_stop is not None:
-        gesture_stop.set()
-    if buzz_task is not None and not buzz_task.done():
-        await asyncio.sleep(0.15)
     await client.stop_notify(NOTIFY_UUID)
     await _wand_shutdown(client)
     _write_csv(log_file, rows)

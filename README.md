@@ -103,6 +103,31 @@ Spell names are transmitted directly over BLE — the box is not required for de
 
 ---
 
+## Architecture Notes
+
+The iPhone BT snoop log (`Bluetooth Capture/HP Bluetooth log.btsnoop`) was captured
+while the official app was connected to **both** the wand and the box simultaneously.
+
+**Wand (MCW) GATT table** — confirmed via live Bleak enumeration:
+
+| Handle | UUID | Properties |
+|--------|------|------------|
+| `0x0002` | `00002a00` (Device Name) | read, write |
+| `0x000b` | `00002a05` (Service Changed) | indicate |
+| `0x000f` | `00002a19` (Battery Level) | read, notify |
+| `0x0013` | `57420002` (Write) | write, write-without-response |
+| `0x0015` | `57420003` (Notify) | notify |
+| `0x0019` | `8ec90003` (Nordic DFU) | write, indicate |
+
+The wand has **no IMU streaming characteristic**. The 20-byte accelerometer packets
+observed in the snoop at handle `0x0016` belong to the **box (MCB)** connection,
+not the wand. The box runs its own undiscovered service for motion data.
+
+The `1008`/`1009`/`100a` event codes on `57420003` are **2-byte status signals** only —
+they indicate IMU activity is occurring but carry no sample data themselves.
+
+---
+
 ## Known Spells (observed)
 | Spell | Notes |
 |-------|-------|
