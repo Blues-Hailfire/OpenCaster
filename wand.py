@@ -117,7 +117,6 @@ def clear_gatt_cache(address: str) -> bool:
             subkey_name = winreg.EnumKey(root, i)
             if addr_clean in subkey_name.upper().replace("_", ""):
                 winreg.DeleteKey(root, subkey_name)
-                print(f"  [IMU] Cleared GATT cache key: {subkey_name}")
                 winreg.CloseKey(root)
                 return True
             i += 1
@@ -289,6 +288,53 @@ async def find_wand(timeout: float = 8.0) -> BLEDevice:
 
         print("  No MCW wand found — retrying in 2s...")
         await asyncio.sleep(2.0)
+
+
+async def spell_success_animation(client: BleakClient) -> None:
+    """Buzz + gold pulse → white flash → fade: plays on successful spell cast.
+
+    Sequence:
+      1. Short sharp buzz  (haptic confirmation)
+      2. Gold burst across all LED groups
+      3. Wait for gold to register
+      4. White flash
+      5. Fade to off
+    """
+    # ── 1. Haptic: short buzz ──────────────────────────────────────────────────
+    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
+    await client.write_gatt_char(WRITE_UUID, buzz_frame(200), response=False)
+    await asyncio.sleep(0.12)
+    await client.write_gatt_char(WRITE_UUID, bytes([0x40]), response=False)
+    await asyncio.sleep(0.05)
+
+    # ── 2. Gold burst ──────────────────────────────────────────────────────────
+    frame = build_frame(*[cmd_changeled(g, 255, 180, 0, 300) for g in range(4)])
+    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
+    await client.write_gatt_char(WRITE_UUID, frame, response=False)
+    await asyncio.sleep(0.35)
+
+    # ── 3. White flash ─────────────────────────────────────────────────────────
+    frame = build_frame(*[cmd_changeled(g, 255, 255, 255, 150) for g in range(4)])
+    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
+    await client.write_gatt_char(WRITE_UUID, frame, response=False)
+    await asyncio.sleep(0.2)
+
+    # ── 4. Fade out ────────────────────────────────────────────────────────────
+    await client.write_gatt_char(WRITE_UUID, clear_all(), response=False)
+
+
+async def spell_fail_animation(client: BleakClient) -> None:
+    """Brief very dim red flash, no buzz: unrecognised cast.
+
+    Silent and subtle — just a faint red wash so the user knows
+    the gesture registered, with no haptic weight at all.
+    """
+    # Dim red flash on groups 1-3 (not tip), low brightness
+    frame = build_frame(*[cmd_changeled(g, 45, 0, 0, 150) for g in range(1, 4)])
+    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
+    await client.write_gatt_char(WRITE_UUID, frame, response=False)
+    await asyncio.sleep(0.18)
+    await client.write_gatt_char(WRITE_UUID, clear_all(), response=False)
 
 
 async def hw_write(client: BleakClient, data: bytes) -> None:
