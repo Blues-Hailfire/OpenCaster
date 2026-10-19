@@ -11,6 +11,7 @@ videos/
 # Per-user state
 progress.json
 settings.json
+wand_profiles.json
 *.tmp
 
 # Python
