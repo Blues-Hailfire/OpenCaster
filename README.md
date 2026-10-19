@@ -5,8 +5,10 @@ Wand experience.  OpenCaster talks to the wand directly over Bluetooth LE: it
 tracks your gesture with the wand's gyro, recognises it against 52 spell
 shapes, and plays that spell's original light, haptic, sound and video
 effects (on the wand, and on a Magic Caster box if one is nearby).  Several
-wands can cast at once, two wizards can duel, and other programs can drive
-the wands through a local API.
+wands can cast at once, wizards can duel (a quick-draw race or a clash of
+spell elements for two, or a Duelling Club rally for up to five), an
+enchanted jack-o'-lantern on screen reacts to every spell, and other
+programs can drive the wands through a local API.
 
 ## Credits
 
@@ -35,6 +37,7 @@ and is not affiliated with or endorsed by Warner Bros.
 - [Quick start](#quick-start)
 - [Using the GUI](#using-the-gui)
 - [Wizard's duel](#wizards-duel)
+- [Environment: the enchanted jack-o'-lantern](#environment-the-enchanted-jack-o-lantern)
 - [Running headless](#running-headless)
 - [Control API](#control-api)
 - [Spells](#spells)
@@ -69,7 +72,7 @@ they work on every platform PySide6 supports.
 
 ## Using the GUI
 
-Three pages: **Cast**, **Spellbook** and **Duel**.  The header shows a pill
+Four pages: **Cast**, **Spellbook**, **Duel** and **Environment**.  The header shows a pill
 for every connected wand (its colour, nickname and battery) and any boxes;
 **⚙** opens Settings.
 
@@ -127,7 +130,11 @@ trails go to `casts/casts.jsonl` for tuning (see
 
 A card for every spell template, coloured with the light colours the spell
 plays on the wand and showing its original gesture icon (`spells/icons/`,
-falling back to the SVG shape).  Open one for its pronunciation, lore and
+falling back to the SVG shape).  The small icon in each card's top left is
+the spell's duelling type (Fire, Explosive, Binding, Locomotive, Water/Ice or
+Protection, as on the duel wheel); utility spells, which take no part in
+clashes or the Duelling Club, have none.  Hovering a card names the type and
+what it beats.  Open one for its pronunciation, lore and
 mastery progress, with buttons to practise it, play its effect on the wands,
 play its sound or watch its video.  Expecto Patronum's page has a **Patronus**
 picker and Colovaria's a **house** picker.
@@ -165,26 +172,167 @@ used (tip +y, bias learned on the fly).
 
 ## Wizard's duel
 
-The original app's duelling mode: two wizards, one spell.  Connect two wands,
-open **Duel**, pick the wizards and the spell pool, and **Begin the duel**.
+Connect the wands, open **Duel**, pick a mode and the wizards, and **Begin
+the duel**.  Quick-draw and Clash are for two wizards, best of five (first
+to three round wins); the Duelling Club is one rally for two to five.  Each
+wand pulses in its colour through the 3-2-1 countdown and flashes on
+**Cast!**; a gesture started during the countdown never counts.
 
-- Each round both wizards are shown the same spell: a 3-2-1 countdown (each
-  wand pulses in its colour), then **Cast!**  The first to cast that spell
-  wins the round; the winner's wand plays the spell, the other fades red.
-- A gesture started during the countdown doesn't count, and neither does a
-  different spell.
-- First to three round wins takes the duel (best of five).  A round nobody
-  wins in 30 s is void; **Skip spell** voids it by hand; after 9 rounds the
-  higher score wins.
+### The NPC opponent
+
+No one to duel?  Any seat can be the **NPC**, a computer opponent; with a
+single wand connected, Wizard 2 is the NPC already.  **NPC skill** sets how
+good it is:
+
+| Skill | Reacts in | Draws a gesture in | Fumbles | Duelling Club answers |
+|-------|-----------|--------------------|---------|-----------------------|
+| Easy | 0.9–1.8 s | 2–3 s | 1 in 4 | right about 2 times in 3 |
+| Medium | 0.5–1.1 s | 1.4–2.3 s | 1 in 8 | right 4 times in 5 |
+| Hard | 0.25–0.6 s | 0.9–1.6 s | 1 in 20 | right 19 times in 20 |
+
+Its panel draws each spell's shape as it casts.  A fumbled gesture isn't
+recognised and it casts again while there's time.  In a clash a Medium or
+Hard NPC learns your favourite element and counters it; in the Duelling Club
+it sometimes blocks with a shield, and sometimes answers wrong and slips
+up.  Its spells sound but never count towards your mastery.  One NPC per
+duel; it needs at least one wand to play against.
+
+### Quick-draw
+
+The original app's duelling mode: two wizards, one spell.
+
+- Each round both wizards are shown the same spell; the first to cast it
+  wins the round.  The winner's wand plays the spell, the other fades red.
+  A different spell doesn't count.
+- A round nobody wins in 30 s is void; **Skip spell** voids it by hand;
+  after 9 rounds the higher score wins.
 - **Spell pools:** *Spells you've cast* (the default: spells you've been
   recognised casting, so rounds don't stall on shapes that won't
   recognise), *All spells*, or one difficulty.
-- The duel opens with the intro video, each round ends with the winning
-  spell's video, and the winner gets confetti, a rainbow on their wand and
-  the celebration video.  **Rematch** starts again.
 
-Labelling and the practice spell are suspended during a duel and restored
-afterwards.  Headless: `python -m opencaster --duel`.
+### Clash
+
+Spells as rock-paper-scissors.  After **Cast!** each wizard has **3
+seconds** to cast any battle spell (a gesture started in time may finish up
+to 2 s late).  Your first recognised battle spell is your pick: your wand
+buzzes and glows dimly in your own colour, and your panel only says *Spell
+chosen*.  Picks stay hidden until both are in or time is up; then both cards
+are revealed, both wands play their spells, and the elements decide:
+
+| Element | Beats | Spells |
+|---------|-------|--------|
+| Fire | Binding, Locomotive | Incendio, Flagrate, Verdimillious |
+| Explosive | Fire, Water/Ice | Bombarda, Confringo, Expulso, Reducto, Finestra |
+| Binding | Locomotive, Explosive | Incarcerous, Brachiabindo, Petrificus Totalus, Fulgari, Immobulus, Impedimenta, Colloshoo, Stupefy |
+| Locomotive | Water/Ice, Explosive | Wingardium Leviosa, Accio, Ascendio, Flipendo, Expelliarmus, Arania Exumai, Piertotum Locomotor, Ventus, The Force Spell |
+| Water/Ice | Fire, Binding | Aguamenti, Glacius, Meteolojinx |
+| Protection | – (blocks everything) | Protego, Salvio Hexia, Expecto Patronum, Finite |
+
+- Each element beats two and loses to two.  The same element twice is a
+  draw, and a shield draws with anything, even no spell at all.
+- An attack beats no spell; if neither wizard casts, the round is void.
+  Draws score nothing, so a clash runs up to 15 rounds (then the higher
+  score wins).
+- Utility spells (Lumos, Nox, Alohomora, Silencio, Reparo …) have no
+  element and play no part: while the window is open, gestures are matched
+  against the 32 battle spells only.  A cast that isn't recognised doesn't
+  use up your pick, so cast again if there's time.
+- The table lives in `opencaster/elements.py`.
+
+### Duelling Club
+
+Two to five wizards, the same elements, turn by turn.  Wizard 1 opens with
+an attack (**3 seconds**).  The next wizard has **5 seconds** to answer
+with a spell that beats it – which the wizard after them must then answer –
+or to block it with a shield, and then has 3 seconds to attack.  **Who
+answers** sets who's next: *In order* goes round the seats (Wizard 1, 2,
+3 …, back to 1); *Random* picks anyone but the caster.
+
+There are no rounds and no limit: the rally goes on until someone answers
+too late or with a spell that doesn't beat the attack (a shield doesn't
+count as an attack).  The wizard whose spell went unanswered wins.  If the
+very first attack fails, the other wizard wins a two-wizard duel, and a
+bigger one ends with no winner.
+
+- Wizards 3–5 appear in Duelling Club mode; set any of them to *no one*.
+  Seats 1–3 sit down the left of the arena and 4–5 down the right.
+- Whose turn it is glows gold; the centre shows the spell to beat, which
+  elements beat it, a timer running round the card, and the rally so far.
+- A gesture that isn't recognised can be cast again while time remains,
+  and one started in time may finish up to 2 s late.  Gestures started
+  before your turn don't count.
+- Every good move plays its spell on the caster's wand and counts towards
+  mastery; only the wand whose turn it is flashes, and only the wizard who
+  slips up fades red.  The spell left unanswered plays its video.
+
+The duel opens with the intro video, each round's winning spell plays its
+video, and the duel's winner gets confetti, a rainbow on their wand and the
+celebration video.  **Rematch** starts again in the same mode.  Labelling
+and the practice spell are suspended during a duel and restored afterwards.
+Headless: `python -m opencaster --duel` (quick-draw), `--clash`, or `--club [N]`
+for a Duelling Club once N wands (2–5) are ready (`--random-order` for random
+turns); add `--npc [easy|medium|hard]` to give the last seat to the NPC
+(`--npc` on its own is a quick-draw against it with one wand).
+
+---
+
+## Environment: the enchanted jack-o'-lantern
+
+**Environment** shows a jack-o'-lantern in a moonlit pumpkin patch, and
+every spell cast from any wand acts on it (the wand, sound and lighting
+effects play as usual).  The practice spell and cast labelling pause while
+the page is open.
+
+It's drawn the way the original app's art is: flat silhouettes in a single
+colour, with the spell's effect as the one bright thing.  The whole night
+takes the colour of the last spell (warm for fire, blue for water, green
+for growing things, purple to start), and a lit pumpkin glows in its
+candle's colour.
+
+A fresh jack-o'-lantern has its candle lit.  Spells change it and play off
+each other, the same way the clash elements do:
+
+| Spells | On the jack-o'-lantern |
+|--------|------------------------|
+| Aguamenti · Glacius · Meteolojinx | douse the candle and fill it with water (it dribbles from the grin) · freeze the water (frost and icicles otherwise) · a rain or snow cloud that douses or fills it |
+| Incendio · Verdimillious · Flagrate | light the candle (melts ice, boils water away, burns ropes, vines and flowers) · a green flame and a green-glowing face, or green sparks · a fiery sigil |
+| Bombarda · Confringo · Expulso · Reducto · Finestra | smash it; **Reparo** mends it |
+| Incarcerous · Brachiabindo · Fulgari | ropes, cords or glowing cuffs: it can't be moved |
+| Petrificus Totalus · Immobulus · Impedimenta · Colloshoo · Stupefy | stone · frozen in place (the flame too) · everything slowed · glued to the ground · stunned, it keels over |
+| Wingardium Leviosa · Ascendio · Accio | float it, and steer it with your wand · launch it · pull it towards you (or summon it back) |
+| Flipendo · The Force Spell · Expelliarmus | knock it over, spilling what's inside · fling it away |
+| Piertotum Locomotor · Arania Exumai · Ventus | it grows legs and hops · spiders scatter · a gust that blows the candle out and whirls leaves and petals |
+| Protego · Salvio Hexia · Expecto Patronum | a shield, a ring of runes or a silvery guardian that blocks the next battle spell |
+| Finite | ends every spell on it: shield, bindings, stone, charms, levitation, vanishing |
+| Lumos · Nox | light up the patch · darken the night (the candle and glowing things still shine) |
+| Colloportus · Alohomora, Aberto | seal the lid with a lock (smothers the candle) · unseal it |
+| Orchideous · Herbivicus | a bouquet bursting out of the top · pumpkin vines that curl up it and bloom |
+| Evanesco | vanish what's inside, or the jack-o'-lantern itself |
+| Colovaria | change its colour (your house colour first) |
+| Scourgify | scrub off soot, sigils and glue |
+| Cantis · Quietus · Silencio | it sings · hums · goes quiet |
+| Confundo · Rictusempra · Riddikulus · The Cheering Charm · The Sleeping Charm | dizzy · giggling · wobbly, in a party hat · golden cheer · asleep until the next spell |
+| Appare Vestigium | reveals the last few spells cast here |
+
+Its carved face changes with its mood: closed eyes asleep, crosses when
+dizzy or stunned, a big grin when it's happy, an open mouth when it sings.
+
+**Wingardium Leviosa** ties the floating pumpkin to the wand that cast it:
+point the wand up, down, left or right and the pumpkin follows, leaning
+into the pull (about 30° of turn takes it to the side of the scene).  When
+the spell's own light ends, the wand glows gold instead of fading, the whole
+time it holds the pumpkin.  Pressing all four pads to cast again ends the
+charm: the glow goes, and the pumpkin drops straight down under gravity –
+a bounce, a squash and a puff of dust – and stays where it lands (Accio
+pulls it back to the middle).  The charm also ends if the pumpkin is
+knocked down, bound or glued, when you leave the page, or on **Reset**.
+Frozen by Immobulus, it hangs in mid-air until that wears off, then drops.
+Cast Wingardium Leviosa again to pick it back up from where it lies.
+
+**Reset the jack-o'-lantern** starts afresh.  The rules are plain Python in
+`opencaster/environment.py`; `opencaster/gui/pumpkin.py` draws them, and
+animates only while something moves (a lit candle flickers, so it keeps
+moving while the page is open).
 
 ---
 
@@ -206,7 +354,7 @@ python -m opencaster.casting evaluate           # score the matcher on labelled 
 python -m opencaster.casting replay capture.csv # replay a recorded capture through casting
 
 # Everything together, in the terminal (every connected wand casts)
-python -m opencaster [--target Lumos] [--duel]
+python -m opencaster [--target Lumos] [--duel | --clash | --club [N] [--random-order]] [--npc [LEVEL]]
 ```
 
 `--address AA:BB:...` picks a wand for the wand commands; `replay --wand
@@ -230,7 +378,7 @@ light and buzz the wands and hear about casts, over plain HTTP + JSON at
 | `POST /api/light` | `{"wand": "all", "color": "#FF8800", "fade_ms": 300, "hold_ms": 0, "groups": [0,1,2,3]}` — `hold_ms` 0 leaves it on; groups run tip (0) to handle (3) |
 | `POST /api/vibrate` | `{"wand": "all", "duration_ms": 200}` |
 | `POST /api/clear` | `{"wand": "all"}` |
-| `POST /api/effect` | `{"name": "success"}` (success, fail, welcome, glow, breathe, clear, countdown, go, round_lost, duel_won), `{"spell": "Lumos"}`, or `{"macro": [...]}` in the spellbook's command format |
+| `POST /api/effect` | `{"name": "success"}` (success, fail, welcome, glow, breathe, clear, countdown, go, locked_in, round_lost, duel_won), `{"spell": "Lumos"}`, or `{"macro": [...]}` in the spellbook's command format |
 
 `wand` is `"all"` (the default), an address, a wand name (`MCW-F108`) or a
 nickname.  Each wand plays one effect at a time, so an API effect replaces
@@ -239,6 +387,15 @@ whatever was playing (including the cast glow).
 Events: `spell` (wand, spell, colours, mastery count), `cast` (accepted or
 not, best match), `casting`, `tap`, `pads`, `wand_connected`, `wand_ready`,
 `wand_disconnected`, `wand_info`, `battery`, `duel`, `settings`, `status`.
+`duel` snapshots carry `mode` (`race`, `clash` or `club`); the NPC plays as
+the player `"npc"` (its `player_info` has `"npc": true` and its `level`, and
+the snapshot `npc_level`).  A clash adds
+`window_s`, `locked` (who has picked), and after each round `picks`,
+`elements` and `line` ("Aguamenti douses Incendio").  Duelling Club adds
+`order` (`in_order` or `random`), `turn`, `turn_kind` (`attack` or
+`counter`), `turn_no`, `window_s`, `incoming` (the spell to answer), `chain`
+(the rally's moves), and once somebody slips up `loser` and `line`; it has a
+single round, so `result` is followed by `finished`.
 
 ```bash
 curl http://127.0.0.1:8765/api/wands
@@ -348,6 +505,7 @@ a wand macro fall back to a generic pulse in the wand's colour.  Colovaria's
 | `success` | Spell without its own macro: buzz, colour wave tip → handle, white flash |
 | `fail` | Failed cast: a faint red wash, no buzz |
 | `countdown`, `go`, `round_lost`, `duel_won` | Duel cues |
+| `locked_in` | Clash pick made: one buzz and a dim glow in the wand's own colour, giving nothing away |
 
 They use only commands already proven on the wand (`0x60` prefix, `changeled`
 fades, host-timed waits, the existing buzz pattern).
@@ -362,7 +520,7 @@ BLE ──▶ opencaster.wand ──notify──▶ opencaster.casting ──cas
         of wands + boxes, scan,     window, tracker, matcher,
         reconnect, keepalive        calibration, cast log
                  └────── opencaster.core.OpenCaster wires them ──────┘
-                          │  opencaster.duel (rules)   opencaster.api (HTTP + SSE)
+                          │  opencaster.duel + .elements (rules)   opencaster.api (HTTP + SSE)
                           │ events (one queued Qt signal)
                           ▼
                   opencaster.gui (PySide6)
@@ -525,10 +683,13 @@ Measured on hardware:
 | `opencaster/casting/` | **Spell assessment** (numpy/scipy only): `tracker.py` gyro gesture tracker · `shapes.py` SVG templates · `matcher.py` DTW recogniser and thresholds · `session.py` casting state machine · `calibration.py` motion calibration logic · `castlog.py` labelled casts · `profiles.py` per-wand calibration · `__main__.py` evaluate / replay CLI |
 | `opencaster/spellbook.py` | Original spell data, cast colours, sounds, videos; mastery progress |
 | `opencaster/settings.py` | Default colour, house, Patronus, API settings (`settings.json`) |
-| `opencaster/duel.py` | Wizard's duel rules |
+| `opencaster/duel.py` | Duel rules: quick-draw, clash and Duelling Club |
+| `opencaster/npc.py` | The NPC opponent: skill levels, what it casts and how long it takes (pure logic; the core plays it) |
+| `opencaster/elements.py` | Spell elements and who beats whom (clash duel, jack-o'-lantern shields) |
+| `opencaster/environment.py` | The enchanted jack-o'-lantern's rules (pure logic) |
 | `opencaster/api/` | Control API: `server.py` (HTTP + SSE), `client.py` (stdlib client), `__main__.py` CLI |
 | `opencaster/core.py` | Wires the wands to casting, effects, duels and the API; `python -m opencaster` runs it headless |
-| `opencaster/gui/` | PySide6 interface: cast page (a stage per wand), spellbook, duel, settings, calibration |
+| `opencaster/gui/` | PySide6 interface: cast page (a stage per wand), spellbook, duel (quick-draw, clash and Duelling Club; `elements.py` wheel and legend), environment (`pumpkin.py` scene), settings, calibration |
 | `tools/` | Spell authoring: `spell_editor.py`, `gesture_png_to_svg.py`, `gesture_waypoints.json` |
 | `spells/` | Spell templates (52 SVGs, used for recognition and the trail guide) |
 | `spells/icons/` | Original gesture PNGs by eigger (MIT), shown on spell cards |

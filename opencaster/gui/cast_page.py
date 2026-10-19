@@ -125,7 +125,7 @@ class WandStage(QFrame):
             self.canvas.set_title("", T.TEXT)
 
     def play_video(self, *paths) -> bool:
-        if any(paths):
+        if any(paths) and self.isVisible():        # not with another page in front (it has sound)
             self.stack.setCurrentWidget(self.video)
             return self.video.play(*paths)
         return False

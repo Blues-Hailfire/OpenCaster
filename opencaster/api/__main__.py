@@ -40,7 +40,7 @@ def main(argv=None):
     s.add_argument("ms", type=int, nargs="?", default=200)
     s = sub.add_parser("effect")
     s.add_argument("name", help="success, fail, welcome, glow, breathe, clear, countdown, go, "
-                                "round_lost, duel_won")
+                                "locked_in, round_lost, duel_won")
     s = sub.add_parser("spell")
     s.add_argument("name")
     s = sub.add_parser("listen")

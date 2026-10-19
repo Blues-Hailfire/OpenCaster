@@ -196,6 +196,9 @@ class ApiServer:
                 if b":" in h:
                     k, v = h.decode("latin-1").split(":", 1)
                     headers[k.strip().lower()] = v.strip()
+            # Read the body before any refusal: closing with it unread makes
+            # Windows reset the connection, and the client never sees the error.
+            raw = await self._read_raw(reader, headers) if method == "POST" else b""
             url = urlsplit(target)
             path = url.path.rstrip("/") or "/"
             query = parse_qs(url.query)
@@ -208,9 +211,7 @@ class ApiServer:
                 auth = headers.get("authorization", "")
                 if auth != f"Bearer {self.token}" and query.get("token", [""])[0] != self.token:
                     raise ApiError(401, "missing or wrong token")
-            body = {}
-            if method == "POST":
-                body = await self._read_body(reader, headers)
+            body = self._parse_body(raw, headers) if method == "POST" else {}
             if method == "GET" and path == "/api/events":
                 include = {x for v in query.get("include", []) for x in v.split(",")}
                 return await self._stream(writer, include, origin)
@@ -230,7 +231,7 @@ class ApiServer:
             except Exception:
                 pass
 
-    async def _read_body(self, reader, headers) -> dict:
+    async def _read_raw(self, reader, headers) -> bytes:
         if "transfer-encoding" in headers:
             raise ApiError(411, "send a Content-Length body (chunked is not supported)")
         try:
@@ -239,11 +240,14 @@ class ApiServer:
             raise ApiError(400, "bad Content-Length")
         if length > MAX_BODY:
             raise ApiError(413, "body too large")
-        if length and not headers.get("content-type", "").startswith("application/json"):
-            raise ApiError(415, "POST bodies must be application/json")
-        if not length:
+        return await asyncio.wait_for(reader.readexactly(length), 10) if length > 0 else b""
+
+    @staticmethod
+    def _parse_body(raw: bytes, headers) -> dict:
+        if not raw:
             return {}
-        raw = await asyncio.wait_for(reader.readexactly(length), 10)
+        if not headers.get("content-type", "").startswith("application/json"):
+            raise ApiError(415, "POST bodies must be application/json")
         try:
             body = json.loads(raw)
         except ValueError:

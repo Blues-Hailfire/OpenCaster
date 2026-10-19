@@ -10,6 +10,8 @@ from PySide6.QtGui import (QColor, QImage, QLinearGradient, QPainter, QPainterPa
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLayout, QSizePolicy, QVBoxLayout,
                                QWidget)
 
+from ..elements import element_of
+from . import elements as GE
 from . import theme as T
 from .glyph import draw_glyph, fit
 
@@ -281,16 +283,21 @@ class ConnectionPill(QFrame):
         if self.address and e.button() == Qt.LeftButton:
             self.clicked.emit(self.address)
 
-    def set_wand(self, info: dict):
+    def set_wand(self, info: dict, compact: bool = False):
+        """compact: leave out the battery figure unless it's low (many wands
+        in the header)."""
         state = "ready" if info.get("ready") else "connected" if info.get("connected") else "connecting"
         self.dot.set_color(info.get("color", T.TEAL) if state == "ready" else
                            T.AMBER if state != "ready" else T.TEAL)
         self.name.setText(info.get("label") or info.get("name") or self.address)
         self.name.setStyleSheet("" if info.get("connected") else f"color: {T.TEXT_DIM};")
         pct = info.get("battery")
-        self.battery.setText(f"▮ {pct}%" if pct is not None and info.get("connected") else
+        low = pct is not None and pct < 20
+        self.battery.setText("" if compact and info.get("connected") and not low else
+                             f"▮ {pct}%" if pct is not None and info.get("connected") else
                              "" if info.get("connected") else "reconnecting…")
-        self.battery.setStyleSheet(f"color: {T.RED if pct is not None and pct < 20 else T.TEXT_DIM};")
+        self.battery.setVisible(bool(self.battery.text()))
+        self.battery.setStyleSheet(f"color: {T.RED if low else T.TEXT_DIM};")
 
     def set_state(self, state: str, text: str = ""):
         self.dot.set_color({"scanning": T.AMBER, "connecting": T.AMBER}.get(state, T.RED))
@@ -480,7 +487,8 @@ def paint_spell_art(p: QPainter, rect: QRectF, color, outline: Optional[np.ndarr
 
 
 class SpellCard(QWidget):
-    """Spellbook grid card: tinted art, glyph, serif name, mastery star."""
+    """Spellbook grid card: tinted art, glyph, serif name, a small duelling
+    type icon (top left) and mastery star (top right)."""
     clicked = Signal(str)
     W, H = 168, 236
 
@@ -489,11 +497,12 @@ class SpellCard(QWidget):
         super().__init__(parent)
         self.name, self.color, self.outline, self.mastered = name, color, outline, mastered
         self.icon = icon
+        self.element = element_of(name)  # duelling type, None for a utility spell
         self._lift = 0.0                 # 0 → 1 while hovered (animated)
         self._anim = None
         self.setFixedSize(self.W, self.H)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip(name)
+        self.setToolTip(f"{name}\n{GE.describe(self.element)}")
 
     def sizeHint(self):
         return QSize(self.W, self.H)
@@ -531,6 +540,7 @@ class SpellCard(QWidget):
         p.setFont(T.font(12.5, serif=True))
         p.drawText(QRectF(r.left() + 8, r.bottom() - 62, r.width() - 16, 52),
                    Qt.AlignHCenter | Qt.AlignVCenter | Qt.TextWordWrap, self.name)
+        GE.draw_badge(p, self.element, QPointF(r.left() + 18, r.top() + 18), r=7.5, alpha=0.55 + 0.3 * k)
         if self.mastered:
             draw_star(p, QPointF(r.right() - 18, r.top() + 18), 8)
 

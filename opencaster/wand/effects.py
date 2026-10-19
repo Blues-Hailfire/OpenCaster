@@ -134,6 +134,14 @@ def go(rgb: tuple = BLUE) -> Effect:
                  + [(p.EFFECT_PREFIX, 0.6), (p.all_groups(0, 0, 0, 900), 0.0)])
 
 
+def locked_in(rgb: tuple = BLUE) -> Effect:
+    """Clash: spell chosen.  One buzz, then a steady half-bright glow in the
+    player's own colour, which gives nothing away until the reveal."""
+    return tuple(_buzz_pulse(150, 0.12, 0.05)
+                 + _prefixed(p.all_groups(*_scale(rgb, 0.5), 150), 2.5)
+                 + [(p.all_groups(0, 0, 0, 600), 0.0)])
+
+
 def round_lost() -> Effect:
     """The other player got there first: a red fade from the handle."""
     return tuple(_wave((120, 0, 0), order=(3, 2, 1, 0), fade_ms=200, step_s=0.08)
@@ -170,7 +178,7 @@ def vibrate(duration_ms: int) -> Effect:
 
 BUILTIN = {"welcome": welcome, "success": success, "fail": fail, "glow": glow,
            "breathe": breathe, "clear": clear, "countdown": countdown_tick, "go": go,
-           "round_lost": round_lost, "duel_won": duel_won}
+           "locked_in": locked_in, "round_lost": round_lost, "duel_won": duel_won}
 
 
 # ── Spellbook macros ───────────────────────────────────────────────────────────

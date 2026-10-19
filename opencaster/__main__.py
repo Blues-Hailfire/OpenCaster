@@ -3,7 +3,11 @@ Headless OpenCaster: connect, cast, see results in the terminal.
 
     python -m opencaster                 auto-connect the wands used last time (or the first found)
     python -m opencaster --target Lumos  practise one spell
-    python -m opencaster --duel          duel as soon as two wands are ready
+    python -m opencaster --duel          quick-draw duel as soon as two wands are ready
+    python -m opencaster --clash         clash duel (elements) as soon as two wands are ready
+    python -m opencaster --club [N]      Duelling Club (turn by turn) once N wands (2-5) are ready
+    python -m opencaster --npc [LEVEL]   duel the NPC (computer opponent) in the last seat – with
+                                         --duel, --clash or --club, or a quick-draw on its own
     python -m opencaster --no-sound      skip casting sounds
 
 Every connected wand casts independently.  The control API runs here too
@@ -19,6 +23,7 @@ import sys
 import time
 
 from .core import OpenCaster
+from .npc import LEVELS as NPC_LEVELS, NPC
 from .wand import DeviceInfo
 
 
@@ -50,6 +55,20 @@ def main(argv=None):
     ap.add_argument("--duel", nargs="?", const="cast", metavar="POOL",
                     help="duel when two wands are ready; POOL: cast (default), all, "
                          "Beginner, Intermediate, Expert")
+    ap.add_argument("--clash", action="store_true",
+                    help="clash duel when two wands are ready: 3 s to cast any battle spell, "
+                         "elements decide the round")
+    ap.add_argument("--club", nargs="?", const=2, type=int, metavar="PLAYERS",
+                    help="Duelling Club once PLAYERS wands (2-5, default 2) are ready: answer "
+                         "each spell with one that beats it, or block and attack, until someone "
+                         "slips up")
+    ap.add_argument("--npc", nargs="?", const="medium", choices=NPC_LEVELS, metavar="LEVEL",
+                    help="duel the NPC, a computer opponent, in the last seat (one wand fewer "
+                         "needed; a quick-draw unless --clash or --club); LEVEL: easy, medium "
+                         "(default) or hard")
+    ap.add_argument("--random-order", action="store_true",
+                    help="Duelling Club: the next to answer is anyone but the caster, at random "
+                         "(default: the next wand in order)")
     ap.add_argument("--no-sound", action="store_true")
     ap.add_argument("--no-boxes", action="store_true", help="don't connect Magic Caster boxes")
     ap.add_argument("--no-api", action="store_true", help="don't start the control API")
@@ -98,16 +117,46 @@ def main(argv=None):
             sound(s["wand"], info.sound())
 
     def on_duel(d):
-        phase = d["phase"]
+        phase, clash, club = d["phase"], d["mode"] == "clash", d["mode"] == "club"
         names = {i["address"]: i["label"] for i in d["player_info"]}
         score = " - ".join(str(d["scores"][a]) for a in d["players"])
         if phase == "countdown":
-            _print(f"[duel] round {d['round']}: {d['spell']} ... {d['count']}")
+            what = "any battle spell" if clash else f"{names[d['starter']]} attacks first" if club \
+                else d["spell"]
+            prefix = "" if club else f"round {d['round']}: "
+            _print(f"[duel] {prefix}{what} ... {d['count']}")
+        elif phase == "racing" and club:
+            who, secs = names[d["turn"]], f"{d['window_s']:.0f} s"
+            if d["overtime"]:
+                _print("[duel] time! finishing the last gesture...")
+            elif d["chain"] and d["chain"][-1]["move"] != "attack":
+                last = d["chain"][-1]
+                _print(f"[duel] {names[last['player']]}: {last['spell']} {last['verb']} {last['against']}")
+            if not d["overtime"]:
+                _print(f"[duel] {who}: " + (f"beat {d['incoming']} or block it! ({secs})"
+                                           if d["turn_kind"] == "counter" else f"attack! ({secs})"))
+        elif phase == "racing" and clash:
+            if d["overtime"]:
+                _print("[duel] time! finishing the last gesture...")
+            elif d["locked"]:
+                _print(f"[duel] {', '.join(names[a] for a in d['locked'])} ready")
+            else:
+                _print(f"[duel] CAST! ({d['window_s']:.0f} seconds)")
         elif phase == "racing":
             _print(f"[duel] CAST {d['spell'].upper()}!")
         elif phase == "result":
             w = d["round_winner"]
+            if clash:
+                picks = "  vs  ".join(f"{names[a]}: {d['picks'].get(a) or '-'}" for a in d["players"])
+                _print(f"[duel] {picks}  ->  {d['line']}")
+            elif club:
+                _print(f"[duel] {names[d['loser']]} slips up: {d['line']}")
+                return                                # one rally: the finish says who won
             _print(f"[duel] {names[w] + ' wins the round' if w else d['message']}   ({score})")
+        elif phase == "finished" and club:
+            w, n = d["winner"], len(d["chain"])
+            _print(f"[duel] {names[w] + ' wins the duel!' if w else 'No winner.'}   "
+                   f"(a rally of {n} spell{'s' if n != 1 else ''})")
         elif phase == "finished":
             w = d["winner"]
             _print(f"[duel] {names[w] + ' is victorious!' if w else 'a draw'}   ({score})")
@@ -115,8 +164,12 @@ def main(argv=None):
             _print(f"[duel] {d['message']}")
 
     def maybe_duel(_info):
-        if args.duel and len(core.ready) >= 2 and not (core.duel and core.duel.active):
-            core.start_duel(sorted(core.ready)[:2], args.duel)
+        wands = min(max(args.club or 2, 2), 5) - (1 if args.npc else 0)
+        if (args.duel or args.clash or args.club or args.npc) and len(core.ready) >= wands \
+                and not (core.duel and core.duel.active):
+            core.start_duel(sorted(core.ready)[:wands] + ([NPC] if args.npc else []), args.duel or "cast",
+                            "clash" if args.clash else "club" if args.club else "race",
+                            "random" if args.random_order else "in_order", args.npc or "medium")
 
     ev.on("cast", on_cast)
     ev.on("spell", on_spell)

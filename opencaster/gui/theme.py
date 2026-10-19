@@ -97,7 +97,7 @@ QPushButton#Primary {{
 }}
 QPushButton#Primary:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f8e2a6, stop:1 #c49a3c); }}
 QPushButton#Nav {{
-    background: transparent; border: none; border-radius: 0; padding: 6px 4px; margin: 0 10px;
+    background: transparent; border: none; border-radius: 0; padding: 6px 4px; margin: 0 6px;
     color: {TEXT_DIM}; font-family: "Palatino Linotype"; font-size: 13pt;
     border-bottom: 2px solid transparent;
 }}

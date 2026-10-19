@@ -8,18 +8,20 @@ import ctypes
 import logging
 import sys
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QHBoxLayout, QLabel,
                                QMainWindow, QPushButton, QStackedWidget, QVBoxLayout)
 
 from ..core import OpenCaster
+from ..npc import NPC
 from ..wand import protocol
 from . import theme as T
 from .bridge import CoreBridge
 from .calibration import CalibrationDialog
 from .cast_page import CastPage
 from .duel_page import DuelPage
+from .environment_page import EnvironmentPage
 from .settings_dialog import SettingsDialog, WandDialog
 from .spellbook_page import SpellbookPage
 from .state import AppState
@@ -28,7 +30,7 @@ from .widgets import Backdrop, ConnectionPill, draw_star
 # Per-wand session events: (address, payload)
 WAND_EVENTS = {"pads", "window_open", "trail", "tap", "timeout", "cast", "blocked",
                "label_needed", "labelled", "calibrating", "calibration"}
-CAST, SPELLBOOK, DUEL = 0, 1, 2
+CAST, SPELLBOOK, DUEL, ENVIRONMENT = 0, 1, 2, 3
 
 
 def app_icon() -> QIcon:
@@ -69,19 +71,21 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("OpenCaster")
         self.setWindowIcon(app_icon())
         self.resize(1400, 860)
-        self.setMinimumSize(1100, 700)
+        self.setMinimumSize(1100, 700)     # widened to fit the header (_fit_header)
 
         back = Backdrop()
         self.setCentralWidget(back)
         root = QVBoxLayout(back)
         root.setContentsMargins(24, 14, 24, 10)
         root.setSpacing(14)
-        root.addLayout(self._build_header())
+        self.header = self._build_header()
+        root.addLayout(self.header)
         self.pages = QStackedWidget()
         self.cast_page = CastPage(self.state, self.open_calibration)
         self.book_page = SpellbookPage(self.state, self.practise)
         self.duel_page = DuelPage(self.state)
-        for page in (self.cast_page, self.book_page, self.duel_page):
+        self.env_page = EnvironmentPage(self.state)
+        for page in (self.cast_page, self.book_page, self.duel_page, self.env_page):
             self.pages.addWidget(page)
         root.addWidget(self.pages, 1)
         self.status = QLabel("Starting…")
@@ -99,14 +103,14 @@ class MainWindow(QMainWindow):
 
     def _build_header(self) -> QHBoxLayout:
         h = QHBoxLayout()
-        h.setSpacing(10)
+        h.setSpacing(8)
         logo = QLabel("✦  OpenCaster")
         logo.setFont(T.font(21, serif=True))
         logo.setStyleSheet(f"color: {T.GOLD};")
         h.addWidget(logo)
-        h.addSpacing(24)
+        h.addSpacing(14)
         self.nav = QButtonGroup(self)
-        for i, text in enumerate(("Cast", "Spellbook", "Duel")):
+        for i, text in enumerate(("Cast", "Spellbook", "Duel", "Environment")):
             b = QPushButton(text)
             b.setObjectName("Nav")
             b.setCheckable(True)
@@ -125,7 +129,7 @@ class MainWindow(QMainWindow):
         self.box_label.setObjectName("Dim")
         h.addWidget(self.box_label)
         self.wands = QComboBox()
-        self.wands.setMinimumWidth(150)
+        self.wands.setMinimumWidth(130)
         self.wands.setPlaceholderText("Found wands")
         self.wands.setToolTip("Wands in range that aren't connected")
         h.addWidget(self.wands)
@@ -155,7 +159,13 @@ class MainWindow(QMainWindow):
 
     def _show_page(self, i: int):
         self.nav.button(i).setChecked(True)
+        was = self.pages.currentIndex()
         self.pages.setCurrentIndex(i)
+        if (was == ENVIRONMENT) != (i == ENVIRONMENT):     # the jack-o'-lantern takes any spell
+            self.bridge.call("set_free_cast", i == ENVIRONMENT)
+
+    def _on_page(self, i: int) -> bool:
+        return self.pages.currentIndex() == i
 
     def _connect_selected(self):
         address = self.wands.currentData()
@@ -191,13 +201,23 @@ class MainWindow(QMainWindow):
                 pill.clicked.connect(self._open_wand)
                 self.pills.addWidget(pill)
                 self._pills[a] = pill
-            self._pills[a].set_wand(self.state.wands[a])
+            self._pills[a].set_wand(self.state.wands[a], compact=len(shown) > 2)
         self.placeholder_pill.setVisible(not shown)
+        QTimer.singleShot(0, self._fit_header)      # once the pills' new sizes are in
         if not shown:
             self.placeholder_pill.set_state("scanning" if self._scanning else "none")
         self._refresh_found()
         title = ", ".join(self.state.wand_label(a) for a in self.state.connected_wands())
         self.setWindowTitle("OpenCaster" + (f" — {title}" if title else ""))
+
+    def _fit_header(self):
+        """Keep the window at least as wide as the header needs, so wand
+        pills are never squeezed unreadable."""
+        self.header.invalidate()
+        m = self.centralWidget().layout().contentsMargins()
+        need = max(1100, self.header.minimumSize().width() + m.left() + m.right())
+        screen = self.screen().availableGeometry().width() if self.screen() else need
+        self.setMinimumWidth(min(need, screen))
 
     def _refresh_found(self):
         current = self.wands.currentData()
@@ -286,24 +306,49 @@ class MainWindow(QMainWindow):
         self.cast_page.add_log(f"{info.name}: {protocol.describe(event)}")
 
     def _ev_window_open(self, address, target):
+        if address == NPC:                      # the computer opponent lives on the duel page
+            self.duel_page.on_window_open(address, target)
+            return
         if self.state.duelling:
             self.duel_page.on_window_open(address, target)
-        elif self.pages.currentIndex() == SPELLBOOK:
+        elif self._on_page(SPELLBOOK):
             self._show_page(CAST)
+        elif self._on_page(ENVIRONMENT):
+            self.env_page.on_window_open(address)
         self.cast_page.wand_event("window_open", address, target)
 
     def _ev_trail(self, address, trail):
+        if address == NPC:
+            self.duel_page.on_trail(address, trail)
+            return
         self.cast_page.wand_event("trail", address, trail)
         if self.state.duelling:
             self.duel_page.on_trail(address, trail)
 
     def _ev_cast(self, address, result):
+        if address == NPC:
+            self.duel_page.on_cast(address, result)
+            return
         self.cast_page.wand_event("cast", address, result)
         if self.state.duelling:
             self.duel_page.on_cast(address, result)
+        elif self._on_page(ENVIRONMENT):
+            self.env_page.on_cast(address, result)
+
+    def _ev_aim(self, address, right, up):
+        if self._on_page(ENVIRONMENT):
+            self.env_page.on_aim(address, right, up)
 
     def _ev_spell(self, s: dict):
-        self.cast_page.on_spell(s, media=not self.state.duelling)
+        if s["wand"] == NPC:                    # its spell is heard, and counts for nothing
+            if self.state.flag("sound", True) and s["info"]:
+                self.state.sound(NPC).play(s["info"].sound())
+            self.cast_page.add_log(f"✦ {s['name']}  ({s['wand_label']})", T.VIOLET)
+            return
+        # Payoff videos only where they can be seen: the cast page, outside a duel.
+        self.cast_page.on_spell(s, media=not self.state.duelling and self._on_page(CAST))
+        if self._on_page(ENVIRONMENT) and not self.state.duelling:
+            self.env_page.on_spell(s)
         self.state.set_count(s["name"], s["count"])
         self.cast_page.add_log(f"✦ {s['name']}  ({s['wand_label']})"
                                + ("  - wand firmware" if s["source"] == "wand" else ""), T.VIOLET)

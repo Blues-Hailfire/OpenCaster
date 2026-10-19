@@ -117,6 +117,10 @@ class GestureTracker:
         return np.column_stack([self.trail_x, self.trail_y]) if self.trail_x \
             else np.zeros((0, 2))
 
+    def position(self) -> tuple:
+        """Where the tip points now, relative to begin(): (right, up) in trail units."""
+        return self._x, self._y
+
     # ── per-sample update ─────────────────────────────────────────────────────
 
     def feed(self, ax, ay, az, gx, gy, gz):

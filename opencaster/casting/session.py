@@ -16,6 +16,8 @@ Rules:
     drift during a grip-and-hold would otherwise match like a real stroke).
   - With a target spell, only it can be accepted; a cast that looks more
     like another spell is rejected, not forced onto the target.
+  - With an allowed set (a clash duel's battle spells), casts are ranked
+    against those spells only.
   - With label_casts on, each cast must be labelled before the next opens.
   - While calibrating, casts aren't assessed.
   - Pad overrides force pads on (a workaround for a broken sensor).
@@ -102,13 +104,16 @@ class CastResult:
 
 
 def assess(trail: np.ndarray, library: SpellLibrary, matcher: SpellMatcher,
-           target: Optional[str] = None) -> CastResult:
-    """Gate and match one finished trail."""
+           target: Optional[str] = None, allowed: Optional[frozenset] = None) -> CastResult:
+    """Gate and match one finished trail.  `allowed` (spell keys) limits the
+    spells it is ranked against."""
     if len(trail) < MIN_TRAIL_PTS:
         return CastResult(trail, GATE_SHORT, (), target)
     if trail_extent(trail) < MIN_GESTURE_DEG:
         return CastResult(trail, GATE_SMALL, (), target)
-    ranked = matcher.rank(trail, library.templates)
+    templates = library.templates if allowed is None else \
+        [t for t in library.templates if t.key in allowed]
+    ranked = matcher.rank(trail, templates)
     if not ranked:
         return CastResult(trail, GATE_NO_SPELLS, (), target)
     if target:
@@ -132,6 +137,7 @@ class CastSession:
         self.clock = clock
         self.tracker = GestureTracker()
         self.target: Optional[str] = None
+        self.allowed: Optional[frozenset] = None  # spell keys casts are ranked against (None: all)
         self.label_casts = False
         self.pending: Optional[dict] = None       # cast record awaiting a label
         self.wand: Optional[str] = None           # wand address, for cast records
@@ -241,7 +247,7 @@ class CastSession:
         if self.calibrator is not None:
             self._emit("calibrating")
             return
-        result = assess(trail, self.library, self.matcher, self.target)
+        result = assess(trail, self.library, self.matcher, self.target, self.allowed)
         self._emit("cast", result)
         if self.label_casts:
             self.pending = self._record(result)
