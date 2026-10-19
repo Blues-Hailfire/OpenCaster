@@ -1,0 +1,9 @@
+# Original Magic Caster spell data and audio/visual media, from
+# uuyyyuu/magic-caster-spellbook.  Not redistributable: keep local.
+#   media/          spellbook.json, *_video_payoff.mp4, patronus/mishap videos
+#   media/sounds/   sfx_<spell>_cast_01..05.mp3
+media/
+media/sounds/
+media/videos/
+sounds/
+videos/
