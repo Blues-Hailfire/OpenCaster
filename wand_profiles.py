@@ -48,13 +48,28 @@ class WandProfiles:
     def save(self, address: str, name: str, calibration: dict):
         """Save or update the calibration for a wand."""
         import time
-        self._data[address.upper()] = {
+        entry = self._data.setdefault(address.upper(), {})
+        entry.update({
             "name":        name,
             "last_seen":   time.strftime("%Y-%m-%dT%H:%M:%S"),
             "calibration": calibration,
-        }
+        })
         self._save_file()
         print(f"  [profiles] Saved calibration for {name} ({address})")
+
+    def load_motion(self, address: str) -> Optional[dict]:
+        """Return the gyro-tracker block {tip_axis, gyro_bias, ...} or None."""
+        return self._data.get(address.upper(), {}).get("motion")
+
+    def save_motion(self, address: str, name: str, motion: dict):
+        """Save the motion calibration produced by wand_calibrator.py."""
+        import time
+        entry = self._data.setdefault(address.upper(), {})
+        entry["name"]      = name or entry.get("name", address.upper())
+        entry["last_seen"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        entry["motion"]    = motion
+        self._save_file()
+        print(f"  [profiles] Saved motion calibration for {entry['name']} ({address})")
 
     def all_wands(self) -> list[dict]:
         """Return list of {address, name, last_seen} for all known wands."""

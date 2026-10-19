@@ -21,19 +21,59 @@ WRITE_UUID   = "57420002-587e-48a0-974c-544d6163c577"
 NOTIFY_UUID  = "57420003-587e-48a0-974c-544d6163c577"
 BATTERY_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 
-# The wand streams 6-axis IMU (accel + gyro) on handle 0x0016 at ~30Hz.
-# The characteristic declaration is absent from GATT discovery responses
-# (Windows BLE / Bleak never surfaces it), but the hardware responds fine.
-# Enable by writing 0x0100 to the CCCD at handle 0x0017, then hook the
-# backend notification dispatcher directly.
+# The wand streams 6-axis IMU (accel + gyro) on NOTIFY_UUID as opcode 0x2C packets.
+# Enable by writing IMUFLAG_RESET (0x31) then IMUFLAG_SET (0x30 0x00 0x80) to WRITE_UUID.
+# See imu_subscribe() below.
 #
-# Packet format (20 bytes):
-#   [seq:uint16 LE][?:u8][count:u8][ax:i16][ay:i16][az:i16][gx:i16][gy:i16][gz:i16][?:2]
-IMU_VALUE_HANDLE  = 0x0015   # ATT handle Windows exposes for the IMU notify char
-                             # (btsnoop shows decl=0x0015 value=0x0016; Windows reports 0x0015)
-IMU_CCCD_HANDLE   = 0x0017   # ATT handle: CCCD for IMU notify char
-IMU_CONFIG_HANDLE = 0x0013   # ATT handle Windows exposes for the IMU write/config char
-                             # (btsnoop shows decl=0x0013 value=0x0014; Windows reports 0x0013)
+# IMU packet format (opcode 0x2C):
+#   [2C][idx_lo][idx_hi][sample_count][12B × sample_count]
+#   Each sample: gyroX gyroY gyroZ accelX accelY accelZ  (all int16 LE)
+#   Scale: accel × IMU_ACCEL_SCALE → G-forces,  gyro × IMU_GYRO_SCALE → rad/s
+#
+# Physical sensor orientation: mounted at 90° rotation on the PCB.
+# Correct axis mapping for gesture drawing:
+#   accel (ax=ay, ay=-ax, az=az)   gyro (gx=gy, gy=-gx, gz=gz)
+
+# ── Message / Response opcodes (from mcw_ble.py / APK reverse engineering) ─────
+class MSG:
+    FIRMWARE_VERSION_READ       = 0x00
+    CHALLENGE                   = 0x01
+    PAIR_WITH_ME                = 0x03
+    BOX_ADDRESS_READ            = 0x09
+    WAND_PRODUCT_INFO_READ      = 0x0E
+    IMUFLAG_SET                 = 0x30   # args: 0x00 0x80 → start IMU streaming
+    IMUFLAG_RESET               = 0x31   # stop IMU streaming
+    LIGHT_CONTROL_CLEAR_ALL     = 0x40
+    LIGHT_CONTROL_SET_LED       = 0x42   # args: group r g b
+    BUTTON_SET_THRESHOLD        = 0xDC   # args: pad_index value
+    BUTTON_CALIBRATION_BASELINE = 0xFB   # requires FACTORY_UNLOCK first
+    IMU_CALIBRATION             = 0xFC   # requires FACTORY_UNLOCK first
+    FACTORY_UNLOCK              = 0xFE   # args: 0x55 0xAA
+
+class RESP:
+    FIRMWARE_VERSION            = 0x00
+    CHALLENGE                   = 0x01   # keepalive ping — fires periodically
+    PONG                        = 0x02
+    BOX_ADDRESS                 = 0x09
+    WAND_PRODUCT_INFO           = 0x0E
+    BUTTON_PAYLOAD              = 0x10   # second byte = bitmask (bit0=btn1 … bit3=btn4)
+    SPELL_CAST                  = 0x24   # [0x24][?][?][len][utf-8 name]
+    IMU_PAYLOAD                 = 0x2C   # [0x2C][idx_lo][idx_hi][count][12B×count]
+    BUTTON_CALIBRATION_BASELINE = 0xFB
+    IMU_CALIBRATION             = 0xFC
+
+# Button bitmask helpers
+BUTTON_BITS = {"button_1": 0x01, "button_2": 0x02, "button_3": 0x04, "button_4": 0x08}
+
+def decode_button_mask(mask: int) -> dict:
+    """Return per-button state dict from a BUTTON_PAYLOAD second byte."""
+    states = {name: bool(mask & bit) for name, bit in BUTTON_BITS.items()}
+    states["button_all"] = (mask & 0x0F) == 0x0F
+    return states
+
+# IMU scale factors (from Android IMUSample.java)
+IMU_ACCEL_SCALE = 0.00048828125   # raw int16 → G-forces
+IMU_GYRO_SCALE  = 0.0010908308    # raw int16 → rad/s
 
 # ── Frame opcodes ──────────────────────────────────────────────────────────────
 FRAME_START  = 0x68
@@ -127,22 +167,27 @@ def clear_gatt_cache(address: str) -> bool:
 
 
 async def imu_subscribe(client: BleakClient, callback) -> None:
-    """Enable IMU and hook notifications using raw ATT writes via GattSession.
+    """Enable IMU streaming and subscribe to notifications.
 
-    From btsnoop (iPhone capture), service 57420001-... owns handles 0x0012-0x0017:
-      0x0013 decl → 0x0014 value  (write char, UUID 57420002, Windows sees this fine)
-      0x0015 decl → 0x0016 value  (notify char, UUID 57420003 variant)
-                    0x0017         (CCCD for 0x0016)
+    Protocol (confirmed via mcw_ble.py cross-platform implementation):
+      1. Subscribe to NOTIFY_UUID (57420003) — this is where IMU packets arrive
+         as opcode 0x2C payloads, same channel as button/spell notifications.
+      2. Write IMUFLAG_RESET (0x31) to stop any existing stream.
+      3. Write IMUFLAG_SET (0x30 0x00 0x80) to start streaming.
 
-    Windows GATT cache often only surfaces 0x0014; 0x0016/0x0017 are hidden.
-    We bypass the cache by sending raw ATT PDUs through GattSession directly.
+    The old approach used raw ATT handle writes (GattSession / WinRT) derived
+    from a btsnoop capture without understanding the command layer. That sequence
+    (300080 → 1001 → 60) was partially correct but fragile and Windows-only.
+    The correct commands are just two writes to the standard write characteristic.
 
-    Enable sequence (from btsnoop):
-      ATT_WRITE_REQ  0x0017 ← 0x0100   (enable notify on IMU char CCCD)
-      ATT_WRITE_REQ  0x0014 ← 300080   (IMU config: range/ODR)
-      ATT_WRITE_REQ  0x0014 ← 1001     (enable streaming)
-      ATT_WRITE_REQ  0x0014 ← 60       (finalise ODR)
-    Then notifications arrive as ATT_HANDLE_VALUE_NTF on handle 0x0016.
+    IMU packets arrive on NOTIFY_UUID with opcode 0x2C:
+      [0x2C][idx_lo][idx_hi][sample_count][12 bytes × sample_count]
+    Each sample: gyroX gyroY gyroZ accelX accelY accelZ (all int16 LE)
+    Scale: accel × 0.00048828125 → G,  gyro × 0.0010908308 → rad/s
+
+    NOTE: The sensor is physically mounted at 90° rotation. To get correct
+    orientation for gesture drawing, remap axes before processing:
+      accel: (ax=ay, ay=-ax, az=az)   gyro: (gx=gy, gy=-gx, gz=gz)
     """
     import ctypes
     from winrt.windows.devices.bluetooth import BluetoothLEDevice
@@ -161,98 +206,18 @@ async def imu_subscribe(client: BleakClient, callback) -> None:
     addr_str = client.address  # "E0:62:21:56:7D:FE"
     addr_int = int(addr_str.replace(":", ""), 16)
 
-    print(f"  [IMU] Opening GattSession for {addr_str}...")
-    ble_dev = await FutureLike(BluetoothLEDevice.from_bluetooth_address_async(addr_int))
-    if ble_dev is None:
-        raise RuntimeError("IMU: could not get BluetoothLEDevice")
+    print(f"  [IMU] Subscribing to NOTIFY_UUID for IMU packets...")
+    await client.start_notify(NOTIFY_UUID, lambda _s, d: callback(bytes(d)))
+    await asyncio.sleep(0.1)
 
-    session = await FutureLike(GattSession.from_device_id_async(ble_dev.bluetooth_device_id))
-    session.maintain_connection = True
+    # Reset any existing stream, then start fresh
+    print("  [IMU] Sending IMUFLAG_RESET (0x31)...")
+    await client.write_gatt_char(WRITE_UUID, struct.pack('B', MSG.IMUFLAG_RESET), response=False)
+    await asyncio.sleep(0.1)
 
-    # ── Helper: raw ATT write via the custom service's GattDeviceService ──
-    # Find the 57420001 service object which spans our target handles
-    target_svc = None
-    for svc in client.services:
-        if svc.uuid.startswith("57420001"):
-            target_svc = svc.obj
-            break
-    if target_svc is None:
-        raise RuntimeError("IMU: custom service 57420001 not found")
-
-    # Get ALL characteristics from this service including hidden ones
-    result = await FutureLike(target_svc.get_characteristics_async())
-    char_map = {ch.attribute_handle: ch for ch in result.characteristics}
-    print(f"  [IMU] Handles visible in 57420001 service: "
-          f"{[f'0x{h:04x}' for h in sorted(char_map)]}")
-
-    # ── Write helper using GattCharacteristic if available ────────────────
-    async def write_handle(handle: int, data: bytes, label: str):
-        ch = char_map.get(handle)
-        if ch is not None:
-            dw = DataWriter()
-            dw.write_bytes(list(data))
-            buf = dw.detach_buffer()
-            res = await FutureLike(
-                ch.write_value_with_result_async(buf, GattWriteOption.WRITE_WITH_RESPONSE))
-            print(f"  [IMU] write 0x{handle:04x} ({label}): status={res.status}")
-        else:
-            # Fallback: use the 0x0014 char (write char) with raw handle
-            # by exploiting the fact that GattCharacteristic.write_value can
-            # target any handle via undocumented attribute_handle override —
-            # instead just warn and skip; we'll handle this with CCCD below.
-            print(f"  [IMU] WARNING: handle 0x{handle:04x} ({label}) not in char_map — skipping")
-
-    # ── Step 1: enable CCCD (0x0017) via the notify characteristic ────────
-    # If 0x0016 is visible, write its CCCD descriptor directly
-    notify_char = char_map.get(IMU_VALUE_HANDLE)       # 0x0015 (notify, props=0x10)
-    write_char  = char_map.get(IMU_CONFIG_HANDLE)      # 0x0013 (write, props=0x0c)
-
-    if notify_char is not None:
-        print("  [IMU] Enabling CCCD via notify characteristic descriptor...")
-        from winrt.windows.devices.bluetooth.genericattributeprofile import (
-            GattClientCharacteristicConfigurationDescriptorValue as GattCCCD)
-        res = await FutureLike(
-            notify_char.write_client_characteristic_configuration_descriptor_with_result_async(
-                GattCCCD.NOTIFY))
-        print(f"  [IMU] CCCD write status={res.status}")
-    else:
-        print("  [IMU] 0x0016 not visible — writing CCCD 0x0017 via write_char trick")
-        # Write CCCD directly through the write characteristic at 0x0014
-        # by temporarily patching its attribute handle (last resort)
-        await write_handle(IMU_CCCD_HANDLE, b"\x01\x00", "CCCD via write_char")
-
-    await asyncio.sleep(0.2)
-
-    # ── Steps 2-4: IMU config writes to 0x0014 ────────────────────────────
-    if write_char is not None:
-        for data, label in [
-            (bytes.fromhex("300080"), "IMU config range/ODR"),
-            (bytes.fromhex("1001"),   "IMU stream enable"),
-            (bytes.fromhex("60"),     "IMU ODR finalise"),
-        ]:
-            dw = DataWriter()
-            dw.write_bytes(data)
-            buf = dw.detach_buffer()
-            res = await FutureLike(
-                write_char.write_value_with_result_and_option_async(buf, GattWriteOption.WRITE_WITH_RESPONSE))
-            print(f"  [IMU] 0x0014 {label}: status={res.status}")
-            await asyncio.sleep(0.15)
-    else:
-        raise RuntimeError("IMU: write characteristic 0x0014 not found")
-
-    # ── Step 5: hook value-changed on 0x0016 ──────────────────────────────
-    if notify_char is None:
-        raise RuntimeError(
-            "IMU: notify characteristic 0x0016 still not found after enable sequence.\n"
-            "Try running as Administrator so the GATT cache can be cleared, then reconnect.")
-
-    def _on_value_changed(sender, args):
-        data = bytes(bytearray(args.characteristic_value))
-        loop.call_soon_threadsafe(callback, data)
-
-    notify_char.add_value_changed(_on_value_changed)
-    print(f"  [IMU] Hooked value_changed on handle 0x{IMU_VALUE_HANDLE:04x} — IMU active!")
-
+    print("  [IMU] Sending IMUFLAG_SET (0x30 0x00 0x80)...")
+    await client.write_gatt_char(WRITE_UUID, struct.pack('BBB', MSG.IMUFLAG_SET, 0x00, 0x80), response=False)
+    print("  [IMU] IMU streaming active — packets arrive as opcode 0x2C on NOTIFY_UUID")
 
 async def find_wand(timeout: float = 8.0) -> BLEDevice:
     """Scan for an MCW-* wand and return a fresh BLEDevice.

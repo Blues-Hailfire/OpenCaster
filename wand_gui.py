@@ -7,17 +7,16 @@ Dark Harry Potter-themed dashboard showing live BLE events,
 Usage:
   python wand_gui.py
 
-Requires: bleak, matplotlib, numpy (all already installed)
+Requires: bleak, matplotlib, numpy, scipy (all already installed)
 """
 
 import asyncio
-import os
 import queue
 import struct
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, font as tkfont
-from collections import deque
 from datetime import datetime
 from typing import Optional
 
@@ -29,185 +28,25 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from wand import (
     WRITE_UUID, NOTIFY_UUID, BATTERY_UUID,
-    IMU_VALUE_HANDLE, IMU_CCCD_HANDLE, imu_subscribe,
     find_wand, hw_init, hw_write,
+    spell_success_animation, spell_fail_animation,
     build_frame, cmd_changeled, clear_all, buzz_frame, hsv_to_rgb,
-    spell_success_animation, spell_fail_animation, cmd_delay,
+    MSG, RESP, decode_button_mask,
 )
-from bleak import BleakClient, BleakScanner
+from matplotlib.collections import LineCollection
+from motion import decode_imu_packet, GestureTracker
 from spell_shapes import SpellLibrary
 from spell_matcher import SpellMatcher
-from wand_calibrator import WandCalibrator, load_calibration
 from wand_profiles import WandProfiles
-import winsound
-
-# ── Spell-colour table ─────────────────────────────────────────────────────────
-# Maps spell name (lower-case) → (R, G, B) accent for the success animation.
-# Unlisted spells fall back to the default gold/white in spell_success_animation.
-SPELL_COLOURS: dict[str, tuple[int, int, int]] = {
-    # ── Core / well-known ─────────────────────────────────────────────────────
-    "lumos":                          (255, 255, 180),   # warm white / candlelight
-    "nox":                            ( 30,  30,  80),   # deep blue-dark
-    "incendio":                       (255,  80,   0),   # orange fire
-    "confringo":                      (255,  50,   0),   # deep red-orange
-    "expelliarmus":                   (200,   0,   0),   # red
-    "protego":                        ( 80, 160, 255),   # shield blue
-    "alohomora":                      (255, 215,   0),   # bright gold
-    "wingardiumleviosa":              ( 80, 220, 120),   # levitation green
-    "reducio":                        ( 60, 200, 255),   # ice blue
-    "engorgio":                       (180,  50, 255),   # expanding purple
-    "revelio":                        (255, 220,  80),   # reveal amber
-    "episkey":                        (  0, 255, 160),   # healing teal
-    "immobulus":                      (  0, 180, 255),   # freeze cyan
-    "impedimenta":                    (  0, 100, 255),   # slow blue
-    "silencio":                       (120,  60, 200),   # silence violet
-    "reparo":                         (255, 200,  60),   # repair gold-yellow
-    "scourgify":                      (  0, 220, 180),   # clean teal-green
-    "orchideous":                     (255,  80, 180),   # flower pink
-    "serpensortia":                   ( 50, 180,  50),   # snake green
-    "riddikulus":                     (255, 200, 100),   # boggart warm yellow
-    "rictusempra":                    (255, 160,  80),   # tickle orange
-    "flipendo":                       (160,  80, 255),   # knockback purple
-    "diffindo":                       (255,  40,  40),   # cutting red
-    "incarcerous":                    (180, 120,  60),   # rope brown-gold
-    "evanesco":                       (150, 150, 255),   # vanish lavender
-    "colloportus":                    (100, 180, 255),   # lock blue
-    "duro":                           (180, 130,  80),   # stone brown
-    "bombarda":                       (255, 120,   0),   # explosion orange
-    "colovaria":                      (200,   0, 200),   # colour-change magenta
-    "melofors":                       (255, 160, 200),   # pumpkin head pink
-    # ── New spells added from spells/ folder ──────────────────────────────────
-    "araniaxumai":                    ( 80,  40,   0),   # dark brown (spider)
-    "arrestomomentum":                (160, 200, 255),   # pale freeze blue
-    "beetletobutton":                 (120, 100,  60),   # dull bronze transform
-    "cauldrontoguitar":               (200, 140,  60),   # warm wood amber
-    "charmtocurereluctantreversers":  (  0, 200, 140),   # healing green-teal
-    "cheeringcharm":                  (255, 220,  60),   # sunny yellow
-    "cistemaperio":                   (200, 160,  80),   # chest-unlock gold
-    "countercurse":                   ( 80, 200,  80),   # counter-magic green
-    "depulso":                        (160,  80, 220),   # repulsion purple
-    "felifors":                       (255, 140,  40),   # cat-transform amber
-    "ferrettofeatherduster":          (180, 160, 120),   # dusty beige
-    "ferula":                         (180, 120,  60),   # bandage warm brown
-    "finiteincantatum":               (200, 200, 200),   # neutral white-grey
-    "homomorphus":                    ( 60, 120,  60),   # creature-green
-    "hystrifors":                     (180,  60, 140),   # porcupine-spike magenta
-    "locomotorwibbly":                (160, 100, 220),   # jelly-legs purple
-    "mimblewimble":                   (100,  40, 160),   # tongue-tie deep purple
-    "mousetosnuffbox":                (180, 140,  80),   # antique gold
-    "petrifcustotalis":               (200, 200, 220),   # petrification pale grey
-    "reparifarge":                    (255, 190,  50),   # untransfiguration gold
-    "salviohexia":                    ( 60, 180, 120),   # protection sage green
-    "spongify":                       (160, 220, 180),   # soft bouncy mint
-    "strigiforma":                    (120,  80,  40),   # owl-transform brown
-    "veraverto":                      (100, 200, 160),   # animal-to-goblet teal
-    "vermillious":                    (220,  40,  40),   # red sparks
-}
-
-
-async def _lumos_animation(client: BleakClient) -> None:
-    """Lumos: flicker → creep from base to tip → tip stays on.
-
-    LED group layout (CORRECTED — tip is group 0, handle is group 3):
-      group 0 = tip (top)
-      group 1 = upper mid
-      group 2 = lower mid
-      group 3 = handle (bottom)
-
-    Sequence:
-      1. Short buzz                       — haptic cast confirmation
-      2. Rapid flicker across all groups  — wand struggling to ignite
-      3. Handle→tip cascade light-up      — light travels up the wand
-      4. Groups 1-3 fade out              — only the tip remains
-      5. Tip stays on permanently         — 65535 ms (wand's max duration cap)
-    """
-    W   = (255, 255, 200)   # warm candlelight white
-    OFF = (0, 0, 0)
-
-    step_ms = 150
-    fade_ms = 200
-
-    frame = buzz_frame(
-        180,
-        # ── Flicker (all groups) ──────────────────────────────────────────────
-        cmd_changeled(0, 180, 180, 160, 40),
-        cmd_changeled(1, 180, 180, 160, 40),
-        cmd_changeled(2, 180, 180, 160, 40),
-        cmd_changeled(3, 180, 180, 160, 40),
-        cmd_delay(45),
-
-        cmd_changeled(0, *OFF, 30), cmd_changeled(1, *OFF, 30),
-        cmd_changeled(2, *OFF, 30), cmd_changeled(3, *OFF, 30),
-        cmd_delay(35),
-
-        cmd_changeled(0, 255, 255, 210, 50),
-        cmd_changeled(1, 255, 255, 210, 50),
-        cmd_changeled(2, 255, 255, 210, 50),
-        cmd_changeled(3, 255, 255, 210, 50),
-        cmd_delay(55),
-
-        cmd_changeled(0, *OFF, 25), cmd_changeled(1, *OFF, 25),
-        cmd_changeled(2, *OFF, 25), cmd_changeled(3, *OFF, 25),
-        cmd_delay(30),
-
-        # ── Cascade: handle(3) → lower-mid(2) → upper-mid(1) ─────────────────
-        cmd_changeled(3, *W, step_ms), cmd_delay(step_ms),
-        cmd_changeled(3, *OFF, fade_ms),
-
-        cmd_changeled(2, *W, step_ms), cmd_delay(step_ms),
-        cmd_changeled(2, *OFF, fade_ms),
-
-        cmd_changeled(1, *W, step_ms), cmd_delay(step_ms),
-        cmd_changeled(1, *OFF, fade_ms),
-
-        # ── Tip on permanently — pure white at max brightness ─────────────────
-        cmd_changeled(0, 255, 255, 255, 65535),
-    )
-
-    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
-    await client.write_gatt_char(WRITE_UUID, frame, response=False)
-    # No clear — tip stays lit until Nox or disconnect.
-
-
-async def _spell_success_with_colour(client: BleakClient, spell_name: str) -> None:
-    """Success animation with a spell-specific accent colour.
-
-    Lumos gets its own bespoke animation (_lumos_animation).
-    All other spells get: buzz → spell-colour burst → white flash → fade.
-    Falls back to gold if the spell has no entry in SPELL_COLOURS.
-    """
-    if spell_name.lower() == "lumos":
-        await _lumos_animation(client)
-        return
-
-    r, g, b = SPELL_COLOURS.get(spell_name.lower(), (255, 180, 0))  # default gold
-
-    # ── 1. Buzz ───────────────────────────────────────────────────────────────
-    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
-    await client.write_gatt_char(WRITE_UUID, buzz_frame(200), response=False)
-    await asyncio.sleep(0.12)
-    await client.write_gatt_char(WRITE_UUID, bytes([0x40]), response=False)
-    await asyncio.sleep(0.05)
-
-    # ── 2. Spell-coloured burst ───────────────────────────────────────────────
-    frame = build_frame(*[cmd_changeled(grp, r, g, b, 300) for grp in range(4)])
-    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
-    await client.write_gatt_char(WRITE_UUID, frame, response=False)
-    await asyncio.sleep(0.35)
-
-    # ── 3. White flash ────────────────────────────────────────────────────────
-    frame = build_frame(*[cmd_changeled(grp, 255, 255, 255, 150) for grp in range(4)])
-    await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
-    await client.write_gatt_char(WRITE_UUID, frame, response=False)
-    await asyncio.sleep(0.2)
-
-    # ── 4. Fade out ───────────────────────────────────────────────────────────
-    await client.write_gatt_char(WRITE_UUID, clear_all(), response=False)
+from wand_calibrator import WandCalibrator
+from cast_log import append_cast, count_casts, load_casts, NOT_A_SPELL
+from spell_effects import SpellEffects, play_wand_macro
+from bleak import BleakClient, BleakScanner
 
 # ── Palette ────────────────────────────────────────────────────────────────────
-BG         = "#0a0c1a"   # deep space
-BG2        = "#0f1228"   # panel bg
-BG3        = "#161a38"   # slightly lighter
+BG         = "#0a0c1a"
+BG2        = "#0f1228"
+BG3        = "#161a38"
 GOLD       = "#c9a84c"
 GOLD_DIM   = "#7a6328"
 BLUE_GLOW  = "#4a9eff"
@@ -218,6 +57,8 @@ TEXT       = "#e8e4d8"
 TEXT_DIM   = "#6b6880"
 BORDER     = "#2a2d4a"
 
+ANY_SPELL = "Any"    # target-spell dropdown entry that accepts every spell
+
 STATUS_COLORS = {
     "state":   GREEN,
     "imu":     BLUE_GLOW,
@@ -227,75 +68,90 @@ STATUS_COLORS = {
     "unknown": RED,
 }
 
-STATUS_CODES = {
-    "1000": ("Idle / Ready",            "state"),
-    "1001": ("Button / Motion trigger", "state"),
-    "1002": ("Action Ack / End",        "state"),
-    "1003": ("Event 3",                 "state"),
-    "1006": ("Event 6",                 "state"),
-    "1008": ("IMU burst start",         "imu"),
-    "1009": ("IMU sample",              "imu"),
-    "100a": ("IMU axis A",              "imu"),
-    "100b": ("Gesture window open",     "gesture"),
-    "100c": ("Gesture alt C",           "gesture"),
-    "100d": ("Gesture alt D",           "gesture"),
-    "100e": ("Orientation change",      "imu"),
-    "100f": ("Gesture window close",    "gesture"),
+# Button payload (0x10) second-byte bitmask meanings
+BUTTON_NAMES = {
+    0x00: ("No buttons",          "state"),
+    0x01: ("Button 1",            "state"),
+    0x02: ("Button 2",            "state"),
+    0x03: ("Buttons 1+2",         "state"),
+    0x04: ("Button 3",            "state"),
+    0x08: ("Button 4",            "state"),
+    0x0F: ("All buttons",         "state"),
 }
+
 
 # ── BLE decode ─────────────────────────────────────────────────────────────────
 
-def decode_imu_packet(data: bytes):
-    """Decode an IMU burst packet from handle 0x0015.
-
-    Burst format:
-      [0]      0x2c  burst marker
-      [1:3]    sequence number (uint16 LE)
-      [3]      0x13  = 19 samples
-      then 19 x 12-byte samples:
-        [ax:i16][ay:i16][az:i16][gx:i16][gy:i16][gz:i16]
-
-    Returns list of (ax, ay, az) tuples for all samples, or None."""
-    if len(data) < 16 or data[0] != 0x2c:
-        return None
-    try:
-        samples = []
-        for i in range(19):
-            off = 4 + i * 12
-            if off + 6 > len(data):
-                break
-            ax, ay, az = struct.unpack_from('<hhh', data, off)
-            samples.append((ax, ay, az))
-        return samples if samples else None
-    except Exception:
-        return None
-
-
 def decode_notification(data: bytes) -> dict:
-    hex_str = data.hex()
-    result = {"raw": hex_str, "type": "unknown", "code": None,
-               "label": None, "category": "unknown", "text": None, "imu": None}
+    """Decode a NOTIFY_UUID packet into a structured event dict.
 
-    if hex_str == "014001":
+    Opcodes from RESP class (wand.py / mcw_ble.py):
+      0x00  Firmware version response
+      0x01  Challenge response (keepalive, fires periodically)
+      0x02  Pong
+      0x09  Box address
+      0x0E  Wand product info
+      0x10  Button payload — second byte is bitmask (bit0=btn1 … bit3=btn4)
+      0x24  Spell cast — [0x24][?][?][len][utf-8 name]
+      0x2C  IMU payload (handled separately via decode_imu_packet)
+      0xFB  Button calibration baseline response
+      0xFC  IMU calibration response
+      0xDD  Button threshold read response
+    """
+    result = {
+        "raw": data.hex(), "type": "unknown", "opcode": data[0] if data else None,
+        "label": None, "category": "unknown", "text": None,
+        "buttons": None,
+    }
+
+    if not data:
+        return result
+
+    opcode = data[0]
+
+    if opcode in (RESP.CHALLENGE, RESP.PONG):
+        # Challenge/pong keepalive — very frequent, treat as system heartbeat
         result.update(type="heartbeat", label="Heartbeat", category="system")
         return result
 
-    if data[0] == 0x24:
-        # Wand broadcasts its own spell name — we ignore it and do our own matching
-        result.update(type="gesture_end", label="Gesture ended", category="gesture")
+    if opcode == RESP.FIRMWARE_VERSION:
+        version = ".".join(str(b) for b in data[1:])
+        result.update(type="info", label=f"FW v{version}", category="system")
         return result
 
-    if data[0] == 0x10 and len(data) >= 2:
-        code = data[:2].hex()
-        label, category = STATUS_CODES.get(code, (f"0x{code}", "unknown"))
-        result.update(type="status", code=code, label=label, category=category)
-        if data[1] in (0x08, 0x09, 0x0a) and len(data) > 2:
-            payload = data[2:]
-            samples = [struct.unpack_from('<h', payload, i)[0]
-                       for i in range(0, len(payload) - 1, 2)]
-            result["imu"] = samples
+    if opcode == RESP.SPELL_CAST:
+        # [0x24][?][?][len][utf-8 name]
+        try:
+            if len(data) >= 5:
+                spell_len = data[3]
+                raw_name = data[4: 4 + spell_len]
+                text = raw_name.decode("utf-8", errors="ignore").strip().replace("\x00", "").replace("_", " ")
+                if text:
+                    result.update(type="spell", label=f"✦ {text}", category="spell", text=text)
+                    return result
+        except Exception:
+            pass
+        result.update(type="spell", label="Spell (decode err)", category="spell")
         return result
 
+    if opcode == RESP.BUTTON_PAYLOAD:
+        # Second byte is a bitmask: bit0=btn1, bit1=btn2, bit2=btn3, bit3=btn4
+        mask = data[1] if len(data) >= 2 else 0
+        states = decode_button_mask(mask)
+        label_text, cat = BUTTON_NAMES.get(mask & 0x0F, (f"Buttons 0x{mask:02X}", "state"))
+        result.update(type="buttons", label=label_text, category=cat, buttons=states)
+        return result
+
+    if opcode == RESP.IMU_PAYLOAD:
+        result.update(type="imu", label="IMU burst", category="imu")
+        return result
+
+    if opcode in (RESP.BUTTON_CALIBRATION_BASELINE, RESP.IMU_CALIBRATION):
+        label = "Button cal done" if opcode == RESP.BUTTON_CALIBRATION_BASELINE else "IMU cal done"
+        result.update(type="calibration", label=label, category="system")
+        return result
+
+    result.update(label=f"0x{opcode:02X} ({data.hex()})")
     return result
 
 
@@ -308,41 +164,39 @@ class BLEWorker:
         self.q = msg_queue
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._client: Optional[BleakClient] = None
+        self._boxes: dict = {}          # address → connected BleakClient
+        self._box_tasks: dict = {}      # address → running _box_loop future
         self._stop = False
         self._target_name: Optional[str] = None
         self._target_address: Optional[str] = None
-        self._connect_event = asyncio.Event()   # set when a new target is chosen
+        self._connect_event = asyncio.Event()
 
     def start(self):
         t = threading.Thread(target=self._run, daemon=True)
         t.start()
 
     def stop(self):
-        """Signal the worker to stop. The loop is stopped by _on_close shutdown."""
         self._stop = True
-        self._connect_event_set_threadsafe()
-
-    def _connect_event_set_threadsafe(self):
-        """Wake the idle loop from any thread safely."""
-        if self.loop and self.loop.is_running():
+        if self.loop and self._connect_event:
+            # Wake the idle loop so it can see _stop=True and exit cleanly
             self.loop.call_soon_threadsafe(self._connect_event.set)
 
     def _run(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        self._connect_event = asyncio.Event()   # create in the correct loop
-        try:
-            self.loop.run_until_complete(self._idle_loop())
-        except RuntimeError:
-            pass   # loop stopped by _on_close before idle_loop completed — expected
+        asyncio.run(self._thread_main())
+
+    async def _thread_main(self):
+        self.loop = asyncio.get_running_loop()
+        self._connect_event = asyncio.Event()
+        await self._idle_loop()
 
     def scan_for_wands(self, callback):
-        """Start a BLE scan in a background thread; call callback(list[(name,addr)])."""
+        """Scan for wands (MCW-*) and boxes (MCB-*); callback gets
+        [(name, address), ...] for both — callers split them by prefix."""
         def _worker():
             async def _scan():
                 devices = await BleakScanner.discover(timeout=self.SCAN_TIMEOUT)
-                return [(d.name, d.address)
-                        for d in devices if d.name and d.name.startswith("MCW")]
+                return [(d.name, d.address) for d in devices
+                        if d.name and d.name.startswith(("MCW", "MCB"))]
             loop = asyncio.new_event_loop()
             try:
                 results = loop.run_until_complete(_scan())
@@ -354,15 +208,13 @@ class BLEWorker:
         threading.Thread(target=_worker, daemon=True).start()
 
     def connect_to(self, name: str, address: str):
-        """Tell the worker to connect to a specific wand (thread-safe)."""
         self._target_name    = name
         self._target_address = address
-        self._connect_event_set_threadsafe()
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._connect_event.set)
 
     async def _idle_loop(self):
-        """Wait for a target then connect; reconnect if dropped."""
         while not self._stop:
-            # Wait until the GUI picks a wand
             await self._connect_event.wait()
             self._connect_event.clear()
             if self._stop:
@@ -370,52 +222,77 @@ class BLEWorker:
             await self._connect_loop()
 
     async def _connect_loop(self):
-        self.q.put({"type": "status_msg",
-                    "text": f"Connecting to {self._target_name}…"})
+        self.q.put({"type": "status_msg", "text": f"Connecting to {self._target_name}…"})
         retry_delay = 2.0
         while not self._stop:
-            # If the user picks a different wand mid-retry, restart
             if self._connect_event.is_set():
                 self._connect_event.clear()
-                self.q.put({"type": "status_msg",
-                            "text": f"Switching to {self._target_name}…"})
+                self.q.put({"type": "status_msg", "text": f"Switching to {self._target_name}…"})
                 retry_delay = 2.0
 
             try:
                 async with BleakClient(self._target_address, timeout=20.0) as client:
                     self._client = client
-                    self.q.put({"type": "connected", "name": self._target_name})
+                    self.q.put({"type": "connected", "name": self._target_name,
+                                "address": self._target_address})
                     retry_delay = 2.0
-                    await asyncio.sleep(1.5)
+
+                    # Subscribe FIRST so CHALLENGE pings are answered during init
+                    await client.start_notify(
+                        NOTIFY_UUID,
+                        lambda _s, d: self.q.put({"type": "ble", "data": bytes(d)}))
+
+                    await asyncio.sleep(0.3)  # brief settle before init writes
                     await hw_init(client)
-                    await client.start_notify(NOTIFY_UUID,
-                        lambda _s, d: self.q.put({"type": "ble", "data": d}))
+                    await self._welcome(client)
+
+                    # Enable IMU streaming: reset then start
+                    await client.write_gatt_char(
+                        WRITE_UUID, struct.pack('B', MSG.IMUFLAG_RESET), response=False)
+                    await asyncio.sleep(0.1)
+                    await client.write_gatt_char(
+                        WRITE_UUID, struct.pack('BBB', MSG.IMUFLAG_SET, 0x00, 0x80), response=False)
+
+                    # Battery notifications on a separate characteristic
                     try:
-                        await imu_subscribe(client,
-                            lambda d: self.q.put({"type": "imu", "data": d}))
-                    except Exception as e:
-                        self.q.put({"type": "status_msg", "text": f"IMU: {e}"})
-                    try:
-                        await client.start_notify(BATTERY_UUID,
+                        await client.start_notify(
+                            BATTERY_UUID,
                             lambda _s, d: self.q.put({"type": "battery", "pct": d[0]}))
                     except Exception:
                         pass
-                    await self._welcome(client)   # after IMU is established
-                    # Stay connected until dropped or user picks new wand
+
                     while not self._stop and client.is_connected:
                         if self._connect_event.is_set():
-                            break   # new wand chosen — drop this connection
+                            break
                         await asyncio.sleep(0.5)
+
+                    # Clean up: stop IMU streaming before disconnect
+                    try:
+                        await client.write_gatt_char(
+                            WRITE_UUID, struct.pack('B', MSG.IMUFLAG_RESET), response=False)
+                    except Exception:
+                        pass
                     await client.stop_notify(NOTIFY_UUID)
+
                 self._client = None
                 self.q.put({"type": "disconnected"})
-                # If a new wand was chosen, hand control back to _idle_loop
                 if self._connect_event.is_set():
                     return
                 if not self._stop:
-                    self.q.put({"type": "status_msg",
-                                "text": "Disconnected — reconnecting…"})
+                    self.q.put({"type": "status_msg", "text": "Disconnected — reconnecting…"})
                     await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                # WinRT service-discovery can raise CancelledError on Windows —
+                # treat it as a transient failure and retry.
+                self._client = None
+                self.q.put({"type": "disconnected"})
+                self.q.put({"type": "status_msg",
+                            "text": "BLE service discovery interrupted — retrying…"})
+                if self._connect_event.is_set():
+                    return
+                if not self._stop:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 1.5, 15.0)
             except Exception as e:
                 self._client = None
                 self.q.put({"type": "disconnected"})
@@ -427,79 +304,132 @@ class BLEWorker:
                     retry_delay = min(retry_delay * 1.5, 15.0)
 
     async def _welcome(self, client):
-        """Rainbow sweep + immediate buzz on connect. Runs after IMU is ready."""
+        """Rainbow + two buzzes on connect."""
         steps, step_ms = 12, 80
         for i in range(steps):
             r, g, b = hsv_to_rgb(i / steps)
-            if i == 0:
-                # First frame — embed buzz so haptic fires instantly with the LEDs
-                frame = buzz_frame(
-                    120,
-                    *[cmd_changeled(g2, r, g, b, step_ms) for g2 in range(4)]
-                )
-            else:
-                frame = build_frame(*[cmd_changeled(g2, r, g, b, step_ms) for g2 in range(4)])
+            frame = build_frame(*[cmd_changeled(g2, r, g, b, step_ms) for g2 in range(4)])
             await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
             await client.write_gatt_char(WRITE_UUID, frame, response=False)
             await asyncio.sleep(step_ms / 1000)
         await client.write_gatt_char(WRITE_UUID, clear_all(), response=False)
+        await asyncio.sleep(0.3)
+        for dur in (0.15, 0.4):
+            await hw_write(client, bytes([0x60]))
+            await hw_write(client, buzz_frame(100))
+            await asyncio.sleep(dur)
+            await hw_write(client, bytes([0x40]))
+            await asyncio.sleep(0.25)
 
-    async def send_blue(self, client):
-        # Groups 1-3 only (upper-mid → handle). Group 0 (tip) stays dark
-        # until a spell is successfully cast.
-        frame = build_frame(*[cmd_changeled(g, 0, 0, 255, 2000) for g in range(1, 4)])
+    async def _send_blue(self, client):
+        frame = build_frame(*[cmd_changeled(g, 0, 0, 255, 2000) for g in range(4)])
         await client.write_gatt_char(WRITE_UUID, bytes([0x60]), response=False)
         await client.write_gatt_char(WRITE_UUID, frame, response=False)
 
-    async def send_clear(self, client):
+    async def _send_clear(self, client):
         await client.write_gatt_char(WRITE_UUID, clear_all(), response=False)
+
+    async def _send_pong(self, client):
+        """Reply to a CHALLENGE (0x01) keepalive ping with PONG (0x02)."""
+        try:
+            await client.write_gatt_char(
+                WRITE_UUID, bytes([MSG.CHALLENGE]), response=False)
+        except Exception:
+            pass  # If we're mid-disconnect, silently ignore
 
     def trigger_blue(self):
         if self._client and self.loop:
-            asyncio.run_coroutine_threadsafe(self.send_blue(self._client), self.loop)
+            asyncio.run_coroutine_threadsafe(self._send_blue(self._client), self.loop)
 
     def trigger_clear(self):
         if self._client and self.loop:
-            asyncio.run_coroutine_threadsafe(self.send_clear(self._client), self.loop)
+            asyncio.run_coroutine_threadsafe(self._send_clear(self._client), self.loop)
 
-    def trigger_success(self, spell_name: str = ""):
-        """Fire the success buzz + LED animation, optionally spell-tinted."""
+    def trigger_cast_animation(self, success: bool, macro: Optional[list] = None):
+        """Thread-safe: play a spell's original wand macro if given, otherwise
+        the generic success or fail animation."""
         if self._client and self.loop:
-            asyncio.run_coroutine_threadsafe(
-                _spell_success_with_colour(self._client, spell_name), self.loop)
+            if success and macro:
+                coro = play_wand_macro(self._client, macro)
+            else:
+                anim = spell_success_animation if success else spell_fail_animation
+                coro = anim(self._client)
+            asyncio.run_coroutine_threadsafe(coro, self.loop)
 
-    def trigger_fail(self):
+    # ── Boxes (MCB-*) ─────────────────────────────────────────────────────────
+    # Each box gets its own reconnecting link on the worker loop.  Box
+    # notifications are forwarded as "box_ble" messages; the GUI only logs
+    # them and answers keepalive challenges.
+
+    def connect_box(self, name: str, address: str):
+        if self.loop and address not in self._box_tasks:
+            self._box_tasks[address] = asyncio.run_coroutine_threadsafe(
+                self._box_loop(name, address), self.loop)
+
+    BOX_MAX_FAILURES = 5    # consecutive failed connects before giving up on a box
+
+    async def _box_loop(self, name: str, address: str):
+        retry_delay, failures = 2.0, 0
+        while not self._stop and failures < self.BOX_MAX_FAILURES:
+            try:
+                async with BleakClient(address, timeout=20.0) as client:
+                    self._boxes[address] = client
+                    self.q.put({"type": "box_connected", "name": name, "address": address})
+                    retry_delay, failures = 2.0, 0
+                    await client.start_notify(
+                        NOTIFY_UUID,
+                        lambda _s, d: self.q.put({"type": "box_ble", "name": name,
+                                                  "address": address, "data": bytes(d)}))
+                    while not self._stop and client.is_connected:
+                        await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                failures += 1   # WinRT service discovery hiccup — retry below
+            except Exception as e:
+                failures += 1
+                self.q.put({"type": "status_msg", "text": f"{name}: {e}"})
+            self._boxes.pop(address, None)
+            self.q.put({"type": "box_disconnected", "name": name, "address": address})
+            if not self._stop:
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 15.0)
+        self._box_tasks.pop(address, None)     # a later scan may try again
+        if failures >= self.BOX_MAX_FAILURES:
+            self.q.put({"type": "status_msg", "text": f"Gave up connecting to {name}"})
+
+    def trigger_box_macro(self, macro: Optional[list]):
+        """Thread-safe: play an original-app box macro on every connected box."""
+        if not (macro and self.loop):
+            return
+        for address, client in list(self._boxes.items()):
+            fut = asyncio.run_coroutine_threadsafe(play_wand_macro(client, macro), self.loop)
+            fut.add_done_callback(lambda f, a=address: f.exception() and self.q.put(
+                {"type": "status_msg", "text": f"Box {a}: effect failed — {f.exception()}"}))
+
+    def reply_box_challenge(self, address: str):
+        client = self._boxes.get(address)
+        if client and self.loop:
+            asyncio.run_coroutine_threadsafe(self._send_pong(client), self.loop)
+
+    def reply_challenge(self):
+        """Thread-safe: schedule a pong reply for the wand's keepalive challenge."""
         if self._client and self.loop:
-            asyncio.run_coroutine_threadsafe(
-                spell_fail_animation(self._client), self.loop)
+            asyncio.run_coroutine_threadsafe(self._send_pong(self._client), self.loop)
 
 
 # ── Main GUI ───────────────────────────────────────────────────────────────────
 
 class WandGUI:
     LOG_MAX    = 200
-    TRAIL_MAX  = 512
+    GESTURE_TIMEOUT_S = 8.0   # auto-close gesture window after this many seconds
+    MIN_CAST_S        = 0.5   # sensors held for less than this = a quick tap, not a cast
+    MIN_GESTURE_DEG   = 15.0  # trail bounding box must span this many degrees to match
+    RESCAN_S          = 10.0  # rescan interval while no wand has been found
+    DEFAULT_CAST_DEG  = 45.0  # typical cast size until labelled casts say otherwise
 
-    # ── IMU filtering constants ────────────────────────────────────────────────
-    # EMA smoothing factor: 0.0 = frozen, 1.0 = raw (no smoothing).
-    # At 0.8, each sample is 80% current reading — direction changes register
-    # within 1-2 samples while still smoothing sensor noise.
-    IMU_ALPHA     = 0.8
-    # Dead-zone: EMA accel below this is treated as stillness (no movement).
-    # Raised to 300 to suppress phantom pre-move draws from wrist settling.
-    # At ~30 Hz the wand returns several samples before intentional motion
-    # begins; this value sits comfortably above that resting noise floor
-    # (~50-150 counts) while still being well below a deliberate cast push.
-    IMU_DEAD_ZONE = 300
-    # Dead-zone hysteresis multiplier.
-    # Once the signal drops below IMU_DEAD_ZONE (motion stops), it must rise
-    # above IMU_DEAD_ZONE * DEAD_ZONE_HYSTERESIS before drawing resumes.
-    # Prevents the trail stuttering on/off at the threshold boundary.
-    # 1.5× means: stop drawing at 300, only restart above 450.
-    DEAD_ZONE_HYSTERESIS = 1.5
-    # Scale: how many position units per raw accel unit per sample.
-    # Larger = bigger gestures drawn for the same wand movement.
-    ACCEL_SCALE   = 18.0
+    # Gesture trail comes from motion.GestureTracker: gyro-integrated tip
+    # direction in degrees (right / up), gravity-referenced so wrist roll and
+    # how the wand is held don't matter.  Per-wand tip axis and gyro bias are
+    # loaded from wand_profiles.json ("motion" block) on connect.
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -511,86 +441,66 @@ class WandGUI:
         self.q: queue.Queue = queue.Queue()
         self.ble = BLEWorker(self.q)
 
+        # Spell recognition
+        self.library  = SpellLibrary(folder="spells")
+        self.matcher  = SpellMatcher()
+        self.effects  = SpellEffects()      # original wand macros + sounds (media/)
+
         self.battery_pct   = tk.StringVar(value="—")
         self.status_var    = tk.StringVar(value="Select a wand and press Connect")
-        self.conn_color    = tk.StringVar(value=RED)
         self.last_spell    = tk.StringVar(value="—")
         self.spell_history: list[str] = []
 
         # Wand selector state
-        self._found_wands: dict = {}          # address → name
+        self._found_wands: dict = {}
+        self._found_boxes: dict = {}
+        self._boxes_up: set = set()         # addresses of connected boxes
+        self._auto_connected = False        # startup auto-connect done
         self._scanning    = False
         self._wand_var    = tk.StringVar(value="")
 
-        # Gesture trail buffers — X (accel X) and Y (accel Y), matching app's 2D view
-        self.trail_x: deque = deque(maxlen=self.TRAIL_MAX)
-        self.trail_y: deque = deque(maxlen=self.TRAIL_MAX)
-        self.gesture_active = False
-        self.frozen_trail: Optional[tuple] = None   # (x, y, spell) after cast
-
-        # Grip / sensor circle state
-        self._grip_active   = False          # True while wand is gripped (1008 on)
-        self._sensor_level  = 0             # 0-4: how many circles are lit
-
-        # EMA filter state (reset each gesture window)
-        self._ema_x: Optional[float] = None
-        self._ema_y: Optional[float] = None
-        # Position integration state (reset each gesture window)
-        self._pos_x: float = 0.0
-        self._pos_y: float = 0.0
-        # Hysteresis state: True = currently drawing (above threshold),
-        # False = waiting for signal to rise above the re-entry threshold.
-        # Reset to False at gesture open so we never start mid-dead-zone.
-        self._dz_active: bool = False
-
-        # Spell matching
-        self._spell_lib     = SpellLibrary("spells")
-        self._spell_matcher = SpellMatcher(threshold=0.18)
-        self._last_cast_spell: Optional[str] = None
-        self._spell_select_var = tk.StringVar(value="— select spell —")
-
-        # Active calibrator window (only one at a time)
-        self._calibrator: Optional[WandCalibrator] = None
-
-        # Per-wand profile storage
+        # Gesture trail in degrees of tip travel (owned by the tracker)
         self._profiles = WandProfiles()
-        self._connected_address: Optional[str] = None
-        self._connected_name:    Optional[str] = None
+        self._tracker  = GestureTracker()
+        self._wand_id: Optional[tuple] = None          # (address, name) once connected
+        self._calibrator: Optional[WandCalibrator] = None
+        self.trail_x: list = self._tracker.trail_x
+        self.trail_y: list = self._tracker.trail_y
+        self.gesture_active = False
+        self.frozen_trail: Optional[tuple] = None
 
-        # Calibration-derived IMU parameters (overrides class constants if loaded)
-        self._cal_x_idx:    int   = 0
-        self._cal_y_idx:    int   = 2
-        self._cal_dead:     float = float(self.IMU_DEAD_ZONE)
-        self._cal_scale_x:  float = float(self.ACCEL_SCALE)
-        self._cal_scale_y:  float = float(self.ACCEL_SCALE)
+        # Button state
+        self._button_states: dict = {}
+        self._button_overrides: dict = {}   # per-button forced-on overrides for broken hardware
+        self._grip_active   = False
+        self._sensor_level  = 0
+        self._gesture_timer = None          # root.after ID for auto-close timeout
+        self._gesture_opened = 0.0          # time.monotonic() when the window opened
 
-        self._apply_calibration()
+        # Typical cast sizes, from labelled casts (see _typical_extent)
+        self._cast_sizes: dict = {}
+        self._load_cast_sizes()
 
-        # Feedback state — populated after each match, cleared on next gesture
-        self._feedback_spell:   Optional[str]   = None
-        self._feedback_score:   Optional[float] = None
-        self._feedback_matched: Optional[bool]  = None
-        self._feedback_trail:   Optional[list]  = None   # normalised trail pts
+        # Target spell dropdown (see _on_target_changed)
+        self._target_var = tk.StringVar(value=ANY_SPELL)
+        self._target_names: dict = {}       # display name → library key
 
-        FEEDBACK_LOG = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "feedback_log.csv")
-        self._feedback_log_path = FEEDBACK_LOG
-        if not os.path.isfile(FEEDBACK_LOG):
-            with open(FEEDBACK_LOG, "w", encoding="utf-8", newline="") as f:
-                import csv
-                csv.writer(f).writerow([
-                    "timestamp", "matched_spell", "score",
-                    "matcher_success", "user_confirmed", "trail_pts"])
+        # Cast labelling (see _request_label)
+        self._label_casts = tk.BooleanVar(value=True)
+        self._pending_cast: Optional[dict] = None
+
+        # Template drawn over the finished trail: (spell, "match"|"guess"|"preview")
+        self._overlay: Optional[tuple] = None
+        self._cast_overlay: Optional[tuple] = None   # what the last cast matched
 
         self._build_ui()
+        self._redraw_trail()                    # start the trail view at cast size
         self.ble.start()
         self.root.after(50, self._poll)
+        self.root.after(500, self._do_scan)     # auto-scan + connect on launch
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        # Auto-connect to the last-used wand shortly after the UI is ready
-        self.root.after(600, self._autoconnect_last_wand)
 
     def _build_ui(self):
-        # ── Header ────────────────────────────────────────────────────────────
         hdr = tk.Frame(self.root, bg=BG, pady=8)
         hdr.pack(fill="x", padx=16, pady=(12, 0))
 
@@ -599,11 +509,9 @@ class WandGUI:
         tk.Label(hdr, text="Magic Wand Monitor", bg=BG, fg=TEXT_DIM,
                  font=("Georgia", 11, "italic")).pack(side="left", padx=(10, 0), pady=(6, 0))
 
-        # ── Right side: battery + conn dot + wand selector ────────────────────
         right_hdr = tk.Frame(hdr, bg=BG)
         right_hdr.pack(side="right")
 
-        # Battery + connection dot
         tk.Label(right_hdr, text="🔋", bg=BG, fg=TEXT_DIM,
                  font=("Segoe UI", 11)).pack(side="left")
         tk.Label(right_hdr, textvariable=self.battery_pct, bg=BG, fg=GREEN,
@@ -611,18 +519,19 @@ class WandGUI:
         self._conn_dot = tk.Label(right_hdr, text="⬤", bg=BG, fg=RED,
                                    font=("Segoe UI", 14))
         self._conn_dot.pack(side="left")
+        self._box_label = tk.Label(right_hdr, text="", bg=BG, fg=GREEN,
+                                   font=("Segoe UI", 10))
+        self._box_label.pack(side="left", padx=(6, 0))
         tk.Label(right_hdr, textvariable=self.status_var, bg=BG, fg=TEXT_DIM,
                  font=("Courier New", 10)).pack(side="left", padx=(6, 16))
 
-        # Wand selector: [Scan] [▾ dropdown] [Connect]
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("Wand.TCombobox",
                         fieldbackground=BG3, background=BG3,
                         foreground=TEXT, selectbackground=BG3,
                         selectforeground=TEXT, arrowcolor=GOLD_DIM,
-                        bordercolor=BORDER, lightcolor=BORDER,
-                        darkcolor=BORDER)
+                        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
         style.map("Wand.TCombobox",
                   fieldbackground=[("readonly", BG3)],
                   selectbackground=[("readonly", BG3)])
@@ -646,15 +555,8 @@ class WandGUI:
             activebackground=GOLD, command=self._do_connect)
         self._conn_btn.pack(side="left")
 
-        tk.Button(right_hdr, text="Calibrate", bg=BG3, fg=BLUE_GLOW, bd=0,
-                  padx=10, pady=3, font=("Courier New", 9),
-                  activebackground=BORDER,
-                  command=self._open_calibrator).pack(side="left", padx=(8, 0))
+        tk.Frame(self.root, bg=BORDER, height=1).pack(fill="x", padx=16, pady=8)
 
-        sep = tk.Frame(self.root, bg=BORDER, height=1)
-        sep.pack(fill="x", padx=16, pady=8)
-
-        # ── Three column body ─────────────────────────────────────────────────
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill="both", expand=True, padx=16, pady=(0, 12))
         body.columnconfigure(0, weight=3, minsize=280)
@@ -662,14 +564,10 @@ class WandGUI:
         body.columnconfigure(2, weight=3, minsize=260)
         body.rowconfigure(0, weight=1)
 
-        # Left: event log
         self._build_log_panel(body)
-
-        # Center: 3D gesture plot
         self._build_plot_panel(body)
-
-        # Right: status + spell history
         self._build_status_panel(body)
+
 
     def _panel(self, parent, col, title):
         outer = tk.Frame(parent, bg=BORDER, padx=1, pady=1)
@@ -692,7 +590,6 @@ class WandGUI:
         self._log_box.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self._log_box.pack(fill="both", expand=True, padx=2, pady=2)
-        # Tag colours
         for cat, clr in STATUS_COLORS.items():
             self._log_box.tag_configure(cat, foreground=clr)
         self._log_box.tag_configure("dim", foreground=TEXT_DIM)
@@ -700,13 +597,27 @@ class WandGUI:
                                      font=("Courier New", 9, "bold"))
 
     def _build_plot_panel(self, body):
-        panel = self._panel(body, 1, "GESTURE TRAIL  (accel X · Z)· Y)")
+        panel = self._panel(body, 1, "GESTURE TRAIL  (tip direction, degrees)")
+
+        # Target spell: "Any", or one spell that is shown as a guide and is
+        # the only cast accepted
+        spell_row = tk.Frame(panel, bg=BG2)
+        spell_row.pack(fill="x", padx=10, pady=(6, 0))
+        tk.Label(spell_row, text="SPELLS", bg=BG2, fg=GOLD_DIM,
+                 font=("Georgia", 7, "bold")).pack(side="left", padx=(0, 8))
+        self._target_combo = ttk.Combobox(
+            spell_row, textvariable=self._target_var, style="Wand.TCombobox",
+            state="readonly", width=26, font=("Courier New", 9))
+        self._target_combo.pack(side="left")
+        self._target_combo.bind("<<ComboboxSelected>>", lambda e: self._on_target_changed())
+        self._refresh_target_list()
+
         self._gesture_label = tk.Label(panel, text="waiting for gesture...",
                                         bg=BG2, fg=TEXT_DIM,
                                         font=("Georgia", 10, "italic"))
         self._gesture_label.pack(pady=(4, 0))
 
-        fig = plt.Figure(figsize=(5, 4.2), dpi=100)
+        fig = plt.Figure(figsize=(8, 7), dpi=100)
         fig.patch.set_facecolor(BG2)
         self.ax = fig.add_subplot(111)
         self._style_ax()
@@ -721,54 +632,40 @@ class WandGUI:
         tk.Button(btn_row, text="Clear Trail", bg=BG3, fg=TEXT_DIM, bd=0, padx=10, pady=3,
                   font=("Courier New", 8), activebackground=BORDER,
                   command=self._clear_trail).pack(side="left", padx=4)
+        tk.Button(btn_row, text="↺ Reload Spells", bg=BG3, fg=TEXT_DIM, bd=0, padx=10, pady=3,
+                  font=("Courier New", 8), activebackground=BORDER,
+                  command=self._reload_spells).pack(side="left", padx=4)
+        tk.Button(btn_row, text="Calibrate", bg=BG3, fg=BLUE_GLOW, bd=0, padx=10, pady=3,
+                  font=("Courier New", 8), activebackground=BORDER,
+                  command=self._open_calibrator).pack(side="left", padx=4)
+        tk.Checkbutton(btn_row, text="Label casts", variable=self._label_casts,
+                       bg=BG2, fg=TEXT_DIM, selectcolor=BG3, activebackground=BG2,
+                       activeforeground=TEXT, bd=0, font=("Courier New", 8),
+                       command=self._on_label_toggle).pack(side="left", padx=4)
 
-        # ── Feedback buttons (shown after a match attempt) ────────────────────
-        self._feedback_frame = tk.Frame(panel, bg=BG2)
-        self._feedback_frame.pack(pady=(0, 4))
+        # Cast label picker — shown after each cast, blocks the next one
+        self._label_frame = tk.Frame(panel, bg=BG3, padx=6, pady=6)
+        self._label_prompt = tk.Label(self._label_frame, bg=BG3, fg=GOLD,
+                                      font=("Georgia", 9, "bold"))
+        self._label_prompt.pack(anchor="w", pady=(0, 4))
+        self._label_btns = tk.Frame(self._label_frame, bg=BG3)
+        self._label_btns.pack(fill="x")
 
-        tk.Label(self._feedback_frame, text="Was this correct?", bg=BG2,
-                 fg=TEXT_DIM, font=("Courier New", 8)).pack(side="left", padx=(0, 8))
-
-        self._confirm_btn = tk.Button(
-            self._feedback_frame, text="✓  Yes", bg=BG3, fg=GREEN, bd=0,
-            padx=10, pady=3, font=("Courier New", 9, "bold"),
-            activebackground=BORDER,
-            command=lambda: self._save_feedback(True))
-        self._confirm_btn.pack(side="left", padx=3)
-
-        tk.Label(self._feedback_frame,
-                 text="= spell identified correctly",
-                 bg=BG2, fg=TEXT_DIM, font=("Courier New", 7)).pack(side="left", padx=(0, 12))
-
-        self._deny_btn = tk.Button(
-            self._feedback_frame, text="✗  No", bg=BG3, fg=RED, bd=0,
-            padx=10, pady=3, font=("Courier New", 9, "bold"),
-            activebackground=BORDER,
-            command=lambda: self._save_feedback(False))
-        self._deny_btn.pack(side="left", padx=3)
-
-        tk.Label(self._feedback_frame,
-                 text="= wrong spell / bad draw",
-                 bg=BG2, fg=TEXT_DIM, font=("Courier New", 7)).pack(side="left")
-
-        self._feedback_frame.pack_forget()   # hidden until a match runs
-
-    def _style_ax(self, ax=None):
-        if ax is None:
-            ax = self.ax
+    def _style_ax(self):
+        ax = self.ax
         ax.set_facecolor(BG3)
         ax.tick_params(colors=TEXT_DIM, labelsize=6)
         ax.xaxis.label.set_color(TEXT_DIM)
         ax.yaxis.label.set_color(TEXT_DIM)
-        ax.set_xlabel("X  (accel)", labelpad=4, fontsize=7)
-        ax.set_ylabel("Z  (accel)", labelpad=4, fontsize=7)
+        ax.set_xlabel("right  (deg)", labelpad=4, fontsize=7)
+        ax.set_ylabel("up  (deg)", labelpad=4, fontsize=7)
         for spine in ax.spines.values():
             spine.set_color(BORDER)
 
     def _build_status_panel(self, body):
         panel = self._panel(body, 2, "STATUS")
 
-        # ── Grip indicator ────────────────────────────────────────────────────
+        # Grip indicator
         grip_frame = tk.Frame(panel, bg=BG2)
         grip_frame.pack(fill="x", padx=10, pady=(8, 0))
         tk.Label(grip_frame, text="GRIP", bg=BG2, fg=GOLD_DIM,
@@ -780,22 +677,25 @@ class WandGUI:
                                      fg=TEXT_DIM, font=("Courier New", 8))
         self._grip_label.pack(side="left", padx=(6, 0))
 
-        # ── Four sensor circles ───────────────────────────────────────────────
+        # Button state display
+        tk.Label(panel, text="BUTTONS", bg=BG2, fg=GOLD_DIM,
+                 font=("Georgia", 7, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+        self._btn_label = tk.Label(panel, text="—", bg=BG2, fg=TEXT_DIM,
+                                    font=("Courier New", 8))
+        self._btn_label.pack(anchor="w", padx=14)
+
+        # Sensor circles
         tk.Label(panel, text="SENSORS", bg=BG2, fg=GOLD_DIM,
                  font=("Georgia", 7, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
-
         circles_frame = tk.Frame(panel, bg=BG2)
         circles_frame.pack(fill="x", padx=10, pady=(0, 6))
-
         self._sensor_canvas = tk.Canvas(circles_frame, bg=BG2, bd=0,
                                          highlightthickness=0, height=52)
         self._sensor_canvas.pack(fill="x")
-
-        # We'll draw the circles after the widget is mapped so we know the width
-        self._sensor_circles = []   # canvas item ids
+        self._sensor_circles = []
         self._sensor_canvas.bind("<Configure>", self._on_sensor_canvas_resize)
 
-        # ── Last spell big display ────────────────────────────────────────────
+        # Last spell
         spell_frame = tk.Frame(panel, bg=BG3, pady=12)
         spell_frame.pack(fill="x", padx=10, pady=(8, 0))
         tk.Label(spell_frame, text="LAST SPELL", bg=BG3, fg=GOLD_DIM,
@@ -803,25 +703,9 @@ class WandGUI:
         tk.Label(spell_frame, textvariable=self.last_spell, bg=BG3, fg=PURPLE,
                  font=("Georgia", 16, "bold"), wraplength=200).pack(pady=(2, 0))
 
-        # ── Spell template preview dropdown ──────────────────────────────────
-        tk.Label(panel, text="PREVIEW TEMPLATE", bg=BG2, fg=GOLD_DIM,
-                 font=("Georgia", 7, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
-
-        spell_sel_frame = tk.Frame(panel, bg=BG2)
-        spell_sel_frame.pack(fill="x", padx=10, pady=(0, 4))
-
-        spell_names = sorted(self._spell_lib.names())
-        self._spell_combo = ttk.Combobox(
-            spell_sel_frame, textvariable=self._spell_select_var,
-            style="Wand.TCombobox", state="readonly",
-            font=("Courier New", 9))
-        self._spell_combo["values"] = ["— select spell —"] + spell_names
-        self._spell_combo.pack(fill="x")
-        self._spell_combo.bind("<<ComboboxSelected>>", self._on_spell_selected)
-
-        # ── Spell history list ────────────────────────────────────────────────
+        # Spell history
         tk.Label(panel, text="SPELL HISTORY", bg=BG2, fg=GOLD_DIM,
-                 font=("Georgia", 7, "bold"), pady=(8)).pack(anchor="w", padx=14, pady=(10, 2))
+                 font=("Georgia", 7, "bold"), pady=8).pack(anchor="w", padx=14, pady=(10, 2))
         hist_outer = tk.Frame(panel, bg=BORDER, padx=1, pady=1)
         hist_outer.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self._hist_box = tk.Text(hist_outer, bg=BG3, fg=PURPLE, bd=0, relief="flat",
@@ -829,54 +713,75 @@ class WandGUI:
                                   selectbackground=BG2)
         self._hist_box.pack(fill="both", expand=True, padx=4, pady=4)
 
-        # Raw IMU readout
+        # IMU readout
         tk.Label(panel, text="LAST IMU SAMPLE", bg=BG2, fg=GOLD_DIM,
                  font=("Georgia", 7, "bold")).pack(anchor="w", padx=14, pady=(4, 2))
         self._imu_label = tk.Label(panel, text="—", bg=BG2, fg=BLUE_GLOW,
                                     font=("Courier New", 8), wraplength=220, justify="left")
         self._imu_label.pack(anchor="w", padx=14, pady=(0, 8))
 
+        # Spell match scores
+        tk.Label(panel, text="MATCH SCORES", bg=BG2, fg=GOLD_DIM,
+                 font=("Georgia", 7, "bold")).pack(anchor="w", padx=14, pady=(4, 2))
+        self._scores_label = tk.Label(panel, text="—", bg=BG2, fg=TEXT_DIM,
+                                       font=("Courier New", 7), wraplength=220, justify="left")
+        self._scores_label.pack(anchor="w", padx=14, pady=(0, 8))
+
+
+    # ── Sensor circle drawing ─────────────────────────────────────────────────
+
+    def _effective_buttons(self) -> dict:
+        """Merge hardware button state with any manual overrides."""
+        merged = dict(self._button_states)
+        for k, v in self._button_overrides.items():
+            if v:
+                merged[k] = True
+        merged["button_all"] = all(merged.get(f"button_{i}", False) for i in range(1, 5))
+        return merged
+
+    def _toggle_button_override(self, button_key: str):
+        """Toggle a button override on/off, then re-evaluate grip logic."""
+        current = self._button_overrides.get(button_key, False)
+        self._button_overrides[button_key] = not current
+        # Re-run grip/gesture logic with new effective state
+        self._evaluate_buttons(self._effective_buttons())
+        self._draw_sensor_circles(self._sensor_level)
+
     def _on_sensor_canvas_resize(self, event):
-        """Redraw sensor circles whenever the canvas is resized."""
         self._draw_sensor_circles(self._sensor_level)
 
     def _draw_sensor_circles(self, level: int):
-        """Draw 4 circles; the first `level` are lit, the rest are dim."""
         c = self._sensor_canvas
         c.delete("all")
         self._sensor_circles = []
-
         w = c.winfo_width()
         if w < 10:
-            return  # not yet mapped
-
-        n      = 4
-        r      = 18          # radius
-        gap    = 10
+            return
+        n, r, gap = 4, 18, 10
         total  = n * r * 2 + (n - 1) * gap
         start  = (w - total) // 2
-        cy     = 26          # vertical centre
-
-        lit_colors = [GREEN, BLUE_GLOW, GOLD, PURPLE]   # one per circle
-        dim_color  = BG3
-        dim_outline = BORDER
-        lit_outline = BG2
+        cy     = 26
+        lit_colors = [GREEN, BLUE_GLOW, GOLD, PURPLE]
+        btn_keys   = ["button_1", "button_2", "button_3", "button_4"]
 
         for i in range(n):
             cx  = start + i * (r * 2 + gap) + r
-            x0, y0 = cx - r, cy - r
-            x1, y1 = cx + r, cy + r
-            lit = i < level
-            fill    = lit_colors[i] if lit else dim_color
-            outline = lit_outline   if lit else dim_outline
-            # Glow halo for lit circles
+            x0, y0, x1, y1 = cx - r, cy - r, cx + r, cy + r
+            lit      = i < level
+            override = self._button_overrides.get(btn_keys[i], False)
+            fill     = lit_colors[i] if lit else BG3
+            outline  = GOLD if override else (BG2 if lit else BORDER)
+            width    = 2 if override else 1
             if lit:
                 hr = r + 4
                 c.create_oval(cx - hr, cy - hr, cx + hr, cy + hr,
                               fill="", outline=fill, width=2)
-            oid = c.create_oval(x0, y0, x1, y1, fill=fill,
-                                outline=outline, width=1)
+            oid = c.create_oval(x0, y0, x1, y1, fill=fill, outline=outline, width=width)
             self._sensor_circles.append(oid)
+            # Bind click to toggle override for this button
+            key = btn_keys[i]
+            c.tag_bind(oid, "<Button-1>",
+                       lambda e, k=key: self._toggle_button_override(k))
 
     def _set_grip(self, active: bool):
         self._grip_active = active
@@ -886,7 +791,6 @@ class WandGUI:
         else:
             self._grip_dot.configure(fg=TEXT_DIM)
             self._grip_label.configure(text="not gripped", fg=TEXT_DIM)
-            # Also reset circles when grip is released
             self._sensor_level = 0
             self._draw_sensor_circles(0)
 
@@ -894,213 +798,7 @@ class WandGUI:
         self._sensor_level = max(0, min(4, level))
         self._draw_sensor_circles(self._sensor_level)
 
-    # ── Calibration ────────────────────────────────────────────────────────────
-
-    def _apply_calibration(self):
-        """Load calibration.json and apply to IMU drawing parameters."""
-        cal = load_calibration()
-        if not cal:
-            return
-        self._apply_calibration_data(cal)
-
-    def _apply_calibration_data(self, cal: dict):
-        """Apply a calibration dict to the live IMU drawing parameters.
-
-        Calibration corrects three things:
-          1. Axis selection  — which raw axis is horizontal vs vertical
-          2. Dead-zone       — derived from non-primary axis noise during casts
-          3. Per-axis scale  — so a full-force gesture fills ±5000 on both axes
-
-        Orientation is intentionally NOT corrected here.  A slight casting angle
-        should appear as a slight angle in the drawing — the spell matcher already
-        handles this via its 8-rotation search.  Correcting orientation here would
-        remove meaningful directional information (vertical ≠ horizontal).
-        """
-        axes     = cal.get("axes", {})
-        axis_map = {"ax": 0, "ay": 1, "az": 2}
-
-        # ── 1. Axis selection ─────────────────────────────────────────────────
-        horiz = cal.get("horizontal_axis", "ax")
-        vert  = cal.get("vertical_axis",   "az")
-        self._cal_x_idx = axis_map.get(horiz, 0)
-        self._cal_y_idx = axis_map.get(vert,  2)
-
-        # ── 2. Dead-zone ──────────────────────────────────────────────────────
-        # Set the dead-zone to 10% of the smaller axis's peak response.
-        # Anything below that threshold isn't meaningful casting motion.
-        #
-        # We use the peak response (half the difference between opposing
-        # directions) on each cast axis because that's the actual signal
-        # amplitude we're trying to gate.  10% of that is well above resting
-        # sensor noise (~50-100 counts) but well below any intentional motion.
-        #
-        # This value is applied AFTER baseline subtraction, so it is compared
-        # against a zero-centred signal — do not derive it from mean_ay
-        # (which measures signal magnitude during active motion, not noise).
-        responses = []
-        if "up" in axes and "down" in axes:
-            responses.append(
-                abs(axes["up"][f"mean_{vert}"] - axes["down"][f"mean_{vert}"]) / 2)
-        if "left" in axes and "right" in axes:
-            responses.append(
-                abs(axes["left"][f"mean_{horiz}"] - axes["right"][f"mean_{horiz}"]) / 2)
-        if responses:
-            self._cal_dead = max(min(responses) * 0.10, 300.0)
-        else:
-            self._cal_dead = float(self.IMU_DEAD_ZONE)
-
-        # ── 3. Per-axis scale ─────────────────────────────────────────────────
-        # With direct accel→position (pos += accel * scale each sample),
-        # a gesture with mean response R over N_SIM samples fills TARGET_POS.
-        # So: scale = TARGET_POS / (R * N_SIM)
-        TARGET_POS = 5000.0
-        N_SIM      = 100
-
-        def find_scale(response: float) -> float:
-            if response < 1.0:
-                return float(self.ACCEL_SCALE)
-            return TARGET_POS / (response * N_SIM)
-
-        if "up" in axes and "down" in axes:
-            vert_resp = abs(axes["up"][f"mean_{vert}"] -
-                            axes["down"][f"mean_{vert}"]) / 2
-            self._cal_scale_y = find_scale(vert_resp)
-
-        if "left" in axes and "right" in axes:
-            horiz_resp = abs(axes["left"][f"mean_{horiz}"] -
-                             axes["right"][f"mean_{horiz}"]) / 2
-            self._cal_scale_x = find_scale(horiz_resp)
-
-
-
-    def _on_calibration_saved(self, cal: dict):
-        """Called by WandCalibrator when a calibration is successfully saved."""
-        self._apply_calibration_data(cal)
-        if self._connected_address and self._connected_name:
-            self._profiles.save(
-                self._connected_address, self._connected_name, cal)
-
-    def _open_calibrator(self):
-        """Open the calibration wizard. Only one instance allowed at a time."""
-        if self._calibrator and self._calibrator.winfo_exists():
-            self._calibrator.lift()
-            return
-        self._calibrator = WandCalibrator(
-            self.root, on_saved=self._on_calibration_saved)
-        self._cal_watch_close()
-
-    def _cal_watch_close(self):
-        """Poll until the calibrator closes, then reload calibration."""
-        if self._calibrator and self._calibrator.winfo_exists():
-            self.root.after(500, self._cal_watch_close)
-        else:
-            self._apply_calibration()
-
-    def _on_wand_connected(self, name: str, address: str):
-        """Called when a wand connects — load its profile or trigger calibration."""
-        if not address:
-            return
-        cal = self._profiles.load(address)
-        if cal:
-            self._apply_calibration_data(cal)
-        else:
-            self.root.after(4000, self._prompt_new_wand_calibration)
-
-    def _prompt_new_wand_calibration(self):
-        """Show a dialog prompting the user to calibrate a new wand."""
-        if not self._connected_address:
-            return   # disconnected before we got here
-        dialog = tk.Toplevel(self.root)
-        dialog.title("New Wand Detected")
-        dialog.configure(bg=BG)
-        dialog.resizable(False, False)
-        dialog.grab_set()
-
-        # Centre over main window
-        self.root.update_idletasks()
-        px, py = self.root.winfo_x(), self.root.winfo_y()
-        dialog.geometry(f"+{px+400}+{py+280}")
-
-        tk.Label(dialog, text="✦  New Wand", bg=BG, fg=GOLD,
-                 font=("Georgia", 14, "bold"), pady=12).pack(padx=30)
-        tk.Label(dialog,
-                 text=f"{self._connected_name}\nhas not been calibrated yet.\n\nCalibrate now for best spell recognition.",
-                 bg=BG, fg=TEXT, font=("Georgia", 10),
-                 justify="center", pady=4).pack(padx=30)
-        tk.Frame(dialog, bg=BORDER, height=1).pack(fill="x", padx=16, pady=8)
-
-        btn_row = tk.Frame(dialog, bg=BG, pady=10)
-        btn_row.pack()
-
-        def _do_cal():
-            dialog.destroy()
-            self._open_calibrator()
-
-        tk.Button(btn_row, text="Calibrate Now", bg=GOLD_DIM, fg=BG, bd=0,
-                  padx=14, pady=5, font=("Courier New", 9, "bold"),
-                  activebackground=GOLD, command=_do_cal).pack(side="left", padx=6)
-        tk.Button(btn_row, text="Later", bg=BG3, fg=TEXT_DIM, bd=0,
-                  padx=14, pady=5, font=("Courier New", 9),
-                  activebackground=BORDER, command=dialog.destroy).pack(side="left", padx=6)
-
-    # ── Wand selector logic ────────────────────────────────────────────────────
-
-    def _autoconnect_last_wand(self):
-        """On startup, silently scan for the last-used wand and connect if found.
-
-        - Reads the last-used wand from wand_profiles.json.
-        - Kicks off a background scan (same as pressing Scan).
-        - If the wand is found, populates the dropdown and connects automatically.
-        - If it's not found (out of range / off), falls back gracefully with a
-          status message — the user can still scan and connect manually.
-        """
-        last = self._profiles.last_used()
-        if last is None:
-            # No known wands yet — nothing to do
-            return
-
-        name = last["name"]
-        addr = last["address"]
-        self.status_var.set(f"Looking for {name}…")
-        self._scan_btn.configure(text="Scanning…", state="disabled", fg=GOLD_DIM)
-        self._wand_var.set(f"Looking for {name}…")
-
-        def _on_result(results):
-            self._scanning = False
-            # Check if the last-used wand showed up in the scan
-            found = next(
-                ((n, a) for n, a in results if a.upper() == addr.upper()), None)
-
-            # Always populate the dropdown with whatever was found
-            for n, a in results:
-                self._found_wands[a] = n
-
-            if found:
-                found_name, found_addr = found
-                labels = [f"{n}  ({a})"
-                          for a, n in sorted(self._found_wands.items())]
-                self._wand_combo["values"] = labels
-                target_label = f"{found_name}  ({found_addr})"
-                self._wand_var.set(target_label)
-                self._scan_btn.configure(text="Scan", state="normal", fg=TEXT_DIM)
-                # Connect directly — no user action needed
-                self.root.title(f"✦ OpenCaster — {found_name}")
-                self.ble.connect_to(found_name, found_addr)
-            else:
-                # Wand not in range — reset UI for manual use
-                self._scan_btn.configure(text="Scan", state="normal", fg=TEXT_DIM)
-                if self._found_wands:
-                    labels = [f"{n}  ({a})"
-                              for a, n in sorted(self._found_wands.items())]
-                    self._wand_combo["values"] = labels
-                    self._wand_var.set(labels[0])
-                else:
-                    self._wand_combo["values"] = ["— no wands found —"]
-                    self._wand_var.set("— no wands found —")
-                self.status_var.set(f"{name} not found — press Scan to retry")
-
-        self._scanning = True
-        self.ble.scan_for_wands(lambda results: self.root.after(0, _on_result, results))
+    # ── Wand selector ─────────────────────────────────────────────────────────
 
     def _do_scan(self):
         if self._scanning:
@@ -1109,28 +807,44 @@ class WandGUI:
         self._scan_btn.configure(text="Scanning…", state="disabled", fg=GOLD_DIM)
         self._wand_combo["values"] = ["Scanning…"]
         self._wand_var.set("Scanning…")
-        self.ble.scan_for_wands(lambda results: self.root.after(0, self._on_scan_done, results))
+        self.ble.scan_for_wands(lambda r: self.root.after(0, self._on_scan_done, r))
 
     def _on_scan_done(self, results: list):
         self._scanning = False
         self._scan_btn.configure(text="Scan", state="normal", fg=TEXT_DIM)
-
         for name, addr in results:
-            self._found_wands[addr] = name
+            if name.startswith("MCB"):
+                self._found_boxes[addr] = name
+                self.ble.connect_box(name, addr)    # no-op if already linked
+            else:
+                self._found_wands[addr] = name
 
         if not self._found_wands:
             self._wand_combo["values"] = ["— no wands found —"]
             self._wand_var.set("— no wands found —")
+            if self._wand_id is None:
+                self.status_var.set("No wand found — scanning again…")
+                self.root.after(int(self.RESCAN_S * 1000), self._do_scan)
             return
-
         labels = [f"{name}  ({addr})"
                   for addr, name in sorted(self._found_wands.items())]
         self._wand_combo["values"] = labels
-        self._wand_var.set(labels[0])
+
+        # Auto-connect: last-used wand if it's here, otherwise the first found.
+        # Only while nothing is connected/selected, so manual picks stand.
+        if self._wand_id is None and not self._auto_connected:
+            last = self._profiles.last_used()
+            pick = next((l for l in labels if last and last["address"] in l), labels[0])
+            self._wand_var.set(pick)
+            self._auto_connected = True
+            self._do_connect()
+        else:
+            # Keep the connected wand selected after a rescan
+            current = self.ble._target_address
+            self._wand_var.set(next((l for l in labels if current and current in l), labels[0]))
 
     def _do_connect(self):
         label = self._wand_var.get()
-        # Find address embedded in the label "MCW-XXXX  (AA:BB:...)"
         for addr, name in self._found_wands.items():
             if addr in label:
                 self.root.title(f"✦ OpenCaster — {name}")
@@ -1138,7 +852,19 @@ class WandGUI:
                 return
         self.status_var.set("Select a wand from the dropdown first")
 
-    # ── Event polling ──────────────────────────────────────────────────────────
+    def _reload_spells(self):
+        self.library.reload()
+        self.effects.reload()
+        self._refresh_target_list()
+        self._redraw_trail(frozen=bool(self.frozen_trail))
+        names = self.library.names()
+        fx = self.effects.summary(names)
+        n_macro = sum(m for m, _ in fx.values())
+        n_sound = sum(1 for _, s in fx.values() if s)
+        self.status_var.set(f"Reloaded {len(names)} spell(s) — "
+                            f"{n_macro} with wand effects, {n_sound} with sounds")
+
+    # ── Event polling ─────────────────────────────────────────────────────────
 
     def _poll(self):
         try:
@@ -1152,267 +878,379 @@ class WandGUI:
     def _handle_msg(self, msg):
         t = msg["type"]
         if t == "connected":
-            name = msg["name"]
-            addr = self.ble._target_address or ""
-            self.status_var.set(name)
+            self.status_var.set(msg["name"])
             self._conn_dot.configure(fg=GREEN)
-            self._connected_name    = name
-            self._connected_address = addr
-            # Stamp this wand as last-used so next launch auto-connects to it.
-            # Pass name so a stub entry is created even before calibration.
-            if addr:
-                self._profiles.set_last_used(addr, name)
-            self._on_wand_connected(name, addr)
+            self._load_motion_profile(msg["address"], msg["name"])
         elif t == "disconnected":
+            ts = datetime.now().strftime("%H:%M:%S")
             self.status_var.set("Disconnected")
             self._conn_dot.configure(fg=RED)
-            self._connected_address = None
-            self._connected_name    = None
+            self._set_grip(False)
+            self._log_event({"type": "system", "label": f"[{ts}] ⚠ Disconnected",
+                             "category": "system", "raw": ""})
         elif t == "battery":
             self.battery_pct.set(f"{msg['pct']}%")
         elif t == "status_msg":
             self.status_var.set(msg["text"])
         elif t == "ble":
             self._handle_ble(msg["data"])
-        elif t == "imu":
-            self._handle_imu(msg["data"])
+        elif t in ("box_connected", "box_disconnected"):
+            up = t == "box_connected"
+            if up:
+                self._boxes_up.add(msg["address"])
+            else:
+                self._boxes_up.discard(msg["address"])
+            self._box_label.configure(
+                text=f"📦 {len(self._boxes_up)}" if self._boxes_up else "",
+                fg=GREEN)
+            ts = datetime.now().strftime("%H:%M:%S")
+            self._log_event({"type": "system", "category": "system", "raw": "",
+                             "label": f"[{ts}] {'📦 Box connected' if up else '⚠ Box disconnected'}"
+                                      f": {msg['name']}"})
+        elif t == "box_ble":
+            dec = decode_notification(msg["data"])
+            if dec.get("type") == "heartbeat":
+                self.ble.reply_box_challenge(msg["address"])
+            dec["label"] = f"[{msg['name']}] {dec.get('label', '')}"
+            self._log_event(dec)
+
 
     def _handle_ble(self, data: bytes):
+        """Route an incoming BLE notification to the correct handler."""
+
+        # IMU packets (0x2C) are high-frequency — handle before decoding to dict
+        if data and data[0] == RESP.IMU_PAYLOAD:
+            samples = decode_imu_packet(data)
+            if samples:
+                self._handle_imu_samples(samples)
+            return
+
         dec = decode_notification(data)
         self._log_event(dec)
 
-        code = dec.get("code")
+        evt_type = dec.get("type")
+        opcode   = dec.get("opcode")
 
-        # ── Grip detection ────────────────────────────────────────────────────
-        if code == "1008":                      # grip on
+        # ── Keepalive challenge (0x01): wand expects a pong or it disconnects ─
+        if evt_type == "heartbeat":
+            self.ble.reply_challenge()
+            return
+
+        # ── Button payload (0x10): drives grip + sensor visualisation ─────────
+        if evt_type == "buttons":
+            self._button_states = dec.get("buttons") or {}
+            self._evaluate_buttons(self._effective_buttons())
+
+            # Update button label (show hardware + overrides)
+            eff = self._effective_buttons()
+            pressed = [f"Btn{i+1}" for i, k in enumerate(
+                ("button_1","button_2","button_3","button_4")) if eff.get(k)]
+            override_active = any(self._button_overrides.values())
+            label = ", ".join(pressed) if pressed else "none"
+            if override_active:
+                label += " ⚡"  # indicator that an override is active
+            self._btn_label.configure(
+                text=label,
+                fg=GOLD if override_active else (GREEN if pressed else TEXT_DIM))
+
+        # ── Spell cast notification from wand (0x24) ─────────────────────────
+        elif evt_type == "spell":
+            spell = dec.get("text", "")
+            if spell:
+                self._on_spell_confirmed(spell)
+
+    def _evaluate_buttons(self, states: dict):
+        """Apply grip/gesture logic from an effective button state dict.
+
+        Called both from BLE button events and from manual override toggles.
+        """
+        gripped = states.get("button_1", False)
+
+        if gripped and not self._grip_active:
             self._set_grip(True)
             self._set_sensor_level(1)
-        elif code == "1009":                    # grip deepening
-            if self._grip_active:
-                self._set_sensor_level(2)
-        elif code == "100a":                    # sensor zone 3
-            if self._grip_active:
-                self._set_sensor_level(3)
+        elif not gripped and self._grip_active:
+            self._set_grip(False)
 
-        # ── Gesture window open — start collecting trail, glow blue ──────────
-        if code == "100b" and not self.gesture_active:
-            self.gesture_active = True
-            self.trail_x.clear(); self.trail_y.clear()
-            self.frozen_trail = None
-            self._ema_x = None
-            self._ema_y = None
-            self._pos_x = 0.0
-            self._pos_y = 0.0
-            self._dz_active = False   # must cross re-entry threshold before drawing
-            # Velocity-zeroing baseline: collect first few IMU samples to
-            # measure the steady-state offset before integrating, then subtract
-            # it so the trail starts from true zero acceleration.
-            self._baseline_buf: list = []
-            self._baseline_done: bool = False
-            self._baseline_x: float = 0.0
-            self._baseline_y: float = 0.0
-            self._feedback_frame.pack_forget()
-            self._gesture_label.configure(text="● gesture window open", fg=GOLD)
-            self._set_sensor_level(4)
-            self.ble.trigger_blue()
-            # Notify calibrator if open
-            if self._calibrator and self._calibrator.winfo_exists():
-                self._calibrator.feed_gesture_open()
+        if gripped:
+            held = sum(1 for k in ("button_2", "button_3", "button_4")
+                       if states.get(k, False))
+            self._set_sensor_level(min(1 + held, 4))
 
-        # IMU samples arrive on IMU_UUID, handled by _handle_imu
+        # All sensors active → open gesture window
+        all_held = states.get("button_all", False)
+        if all_held and not self.gesture_active and self._pending_cast is not None:
+            self._gesture_label.configure(text="label the last cast first", fg=RED)
+            self._label_prompt.configure(fg=RED)
+        elif all_held and not self.gesture_active:
+            self._open_gesture_window()
 
-        # Gesture ended — run our own shape matching against all templates
-        elif dec.get("type") == "gesture_end":
-            self._run_spell_match()
+        # Any sensor released → close gesture window
+        elif not all_held and self.gesture_active:
+            self._close_gesture_window()
 
-        # Gesture close / ack / idle — clear LEDs, stop trail
-        # Only 100f and 1000 are genuine end-of-gesture signals.
-        # 1002 fires mid-gesture and must NOT trigger matching.
-        if code in ("100f", "1000"):
-            if self.gesture_active and not self.frozen_trail:
-                # Notify calibrator before spell match consumes the gesture
-                if self._calibrator and self._calibrator.winfo_exists():
-                    self._calibrator.feed_gesture_close()
-                else:
-                    self._run_spell_match()
-            self.gesture_active = False
-            # Some spells (e.g. Lumos) intentionally leave LEDs on after cast.
-            # Don't clear if the last matched spell owns the current LED state.
-            PERSISTENT_SPELLS = {"lumos"}
-            if self._last_cast_spell and self._last_cast_spell.lower() in PERSISTENT_SPELLS:
-                pass  # leave LEDs alone — spell animation manages them
-            else:
-                self.ble.trigger_clear()
-            if code == "1000":
-                self._set_grip(False)
-
-    def _run_spell_match(self):
-        """Match the current trail against every loaded template using match_all().
-
-        match_all() pre-processes the trail once, scores all templates, and
-        returns a ranked list sorted by score (best first).  We use the top
-        result to decide success/failure and show the next two as hint lines
-        in the MissCast display so you can see what the recogniser was closest
-        to guessing.
-        """
-        if not self.trail_x:
-            self._gesture_label.configure(text="no trail recorded", fg=TEXT_DIM)
-            return
-
-        # Trim trailing stillness: drop the last 5 trail points, which are
-        # typically the wrist-settling artifact at gesture close.
-        tx = list(self.trail_x)
-        ty = list(self.trail_y)
-        if len(tx) > 10:
-            tx = tx[:-5]
-            ty = ty[:-5]
-
-        trail_arr = np.array(list(zip(tx, ty)))
-
-        ranked = self._spell_matcher.match_all(trail_arr, self._spell_lib)
-        print(f"  [match] trail pts={len(trail_arr)}  templates={len(ranked)}")
-        if ranked:
-            top3 = ranked[:3]
-            print("  [match] top-3: " +
-                  "  |  ".join(f"{r['spell']} {r['score']:.3f}" for r in top3))
-
-        best = ranked[0] if ranked else None
-
-        if self.trail_x:
-            self.frozen_trail = (list(self.trail_x), list(self.trail_y),
-                                 best["spell"] if best else "?")
-
-        if best and best["success"]:
-            spell     = best["spell"].capitalize()
-            score_pct = int((1 - best["score"]) * 100)
-            self._last_cast_spell = spell
-            self.last_spell.set(spell)
-            self.spell_history.insert(
-                0, f"{datetime.now().strftime('%H:%M:%S')}  ✦ {spell}")
-            self._update_history()
-            self._gesture_label.configure(
-                text=f"✦ {spell}  ✓  {score_pct}%", fg=GREEN)
-            self._redraw_trail(frozen=True, success=True)
-            self.ble.trigger_success(best["spell"])
-            self._play_sound(spell)
-        else:
-            # Build a hint string from top-3 runner-ups
-            if ranked:
-                hints = "  ".join(
-                    f"{r['spell']} {int((1 - r['score']) * 100)}%"
-                    for r in ranked[:3]
-                )
-                hint_line = f"\n  closest: {hints}"
-            else:
-                hint_line = ""
-            self._gesture_label.configure(
-                text=f"✗ MissCast{hint_line}", fg=RED)
-            self.last_spell.set("MissCast")
-            self.spell_history.insert(
-                0, f"{datetime.now().strftime('%H:%M:%S')}  ✗ MissCast")
-            self._update_history()
-            self._redraw_trail(frozen=True, success=False)
-            self.ble.trigger_fail()
-
-        # ── Store feedback state and show buttons ─────────────────────────────
-        self._feedback_spell   = best["spell"] if best else None
-        self._feedback_score   = best["score"] if best else 1.0
-        self._feedback_matched = bool(best and best["success"])
-        # Normalise trail for storage — same transform as matcher
-        if self.trail_x:
-            pts = np.array(list(zip(self.trail_x, self.trail_y)), dtype=float)
-            pts = pts - pts.mean(axis=0)
-            s = np.abs(pts).max()
-            if s > 1e-9:
-                pts = pts / s
-            self._feedback_trail = pts.tolist()
-        self._feedback_frame.pack(pady=(0, 4))
-
-    def _handle_imu(self, data: bytes):
-        samples = decode_imu_packet(data)
-        if not samples:
-            return
-        ax, ay, az = samples[0]
-        self._imu_label.configure(text=f"ax={ax:6d}  ay={ay:6d}  az={az:6d}")
-        # Feed raw samples to calibrator if it's open and collecting
-        if self._calibrator and self._calibrator.winfo_exists():
-            for sax, say, saz in samples:
-                self._calibrator.feed_sample(sax, say, saz)
+    def _gesture_timeout(self):
+        """Called by the auto-close timer if gesture window has been open too long."""
         if self.gesture_active:
-            for ax, ay, az in samples:
-                # ── Select axes from calibration ──────────────────────────────
-                raw_vals = (float(ax), float(ay), float(az))
-                raw_x = raw_vals[self._cal_x_idx]
-                raw_y = raw_vals[self._cal_y_idx]
+            self._gesture_label.configure(text="gesture timeout — closing", fg=RED)
+            self._close_gesture_window()
 
-                # ── Velocity-zeroing baseline (first 3 samples) ───────────────
-                # Collect the first 3 samples to measure the DC offset before
-                # motion begins (gravity component + sensor bias), then subtract
-                # it for the rest of the gesture so the trail starts from zero.
-                if not self._baseline_done:
-                    self._baseline_buf.append((raw_x, raw_y))
-                    if len(self._baseline_buf) >= 3:
-                        xs = [s[0] for s in self._baseline_buf]
-                        ys = [s[1] for s in self._baseline_buf]
-                        self._baseline_x = sum(xs) / len(xs)
-                        self._baseline_y = sum(ys) / len(ys)
-                        self._baseline_done = True
-                    continue   # don't add baseline samples to the trail
+    def _open_gesture_window(self):
+        """Start collecting a new gesture trail."""
+        self.gesture_active = True
+        self._gesture_opened = time.monotonic()
+        self._overlay = self._cast_overlay = None
+        self._tracker.begin()
+        self.trail_x, self.trail_y = self._tracker.trail_x, self._tracker.trail_y
+        self.frozen_trail = None
+        self._gesture_label.configure(text="● gesture window open", fg=GOLD)
+        self._set_sensor_level(4)
+        self.ble.trigger_blue()
+        # Cancel any stale timer and set a fresh auto-close timeout
+        if self._gesture_timer is not None:
+            self.root.after_cancel(self._gesture_timer)
+        self._gesture_timer = self.root.after(
+            int(self.GESTURE_TIMEOUT_S * 1000), self._gesture_timeout)
 
-                # Subtract baseline offset
-                raw_x -= self._baseline_x
-                raw_y -= self._baseline_y
+    def _close_gesture_window(self):
+        """End gesture collection and attempt spell matching."""
+        self.gesture_active = False
+        self._tracker.end()
+        # Cancel the auto-close timer if we're closing normally
+        if self._gesture_timer is not None:
+            self.root.after_cancel(self._gesture_timer)
+            self._gesture_timer = None
+        self._set_sensor_level(0)
 
-                # ── EMA smoothing ─────────────────────────────────────────────
-                if self._ema_x is None:
-                    self._ema_x, self._ema_y = raw_x, raw_y
-                else:
-                    a = self.IMU_ALPHA
-                    self._ema_x = a * raw_x + (1 - a) * self._ema_x
-                    self._ema_y = a * raw_y + (1 - a) * self._ema_y
+        # Quickly touching and releasing the sensors isn't a cast: no
+        # matching, no wand animation, no label prompt — just drop the glow.
+        held = time.monotonic() - self._gesture_opened
+        if held < self.MIN_CAST_S:
+            self.ble.trigger_clear()
+            self._gesture_label.configure(
+                text=f"ignored (quick tap, {held:.1f} s)", fg=TEXT_DIM)
+            self._redraw_trail()
+            return
 
-                # ── Dead-zone with hysteresis ─────────────────────────────────
-                # Magnitude of smoothed acceleration on the two drawing axes.
-                mag = max(abs(self._ema_x), abs(self._ema_y))
-                dead    = self._cal_dead
-                re_entry = dead * self.DEAD_ZONE_HYSTERESIS
+        if self._calibrator is not None:
+            self.ble.trigger_clear()
+            self._gesture_label.configure(text="calibrating — matching paused", fg=TEXT_DIM)
+            return
 
-                if self._dz_active:
-                    # Currently drawing — stop if signal falls below dead zone
-                    if mag < dead:
-                        self._dz_active = False
-                else:
-                    # Currently idle — only start drawing above the re-entry threshold
-                    if mag >= re_entry:
-                        self._dz_active = True
+        trail = np.column_stack([list(self.trail_x), list(self.trail_y)])
+        gate, results = self._match_trail(trail)
 
-                if not self._dz_active:
-                    continue
+        # Overlay the template the cast was judged against: the target spell
+        # if one is chosen, otherwise the best match
+        if results:
+            best = results[0]
+            target = self._target()
+            if target:
+                self._cast_overlay = (target, "match" if best["success"] else "miss")
+            else:
+                self._cast_overlay = (best["spell"], "match" if best["success"] else "guess")
+            self._overlay = self._cast_overlay
+            self._redraw_trail(frozen=best["success"])
 
-                # ── Direct accel → position (no velocity accumulation) ────────
-                # Position moves proportionally to current smoothed acceleration.
-                # Direction changes register immediately — no old velocity to
-                # bleed off before the new direction shows in the trail.
-                self._pos_x += self._ema_x * self._cal_scale_x
-                self._pos_y += self._ema_y * self._cal_scale_y
+        if self._label_casts.get():
+            best = results[0] if results else None
+            self._request_label({
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "wand":      self._wand_id[0] if self._wand_id else None,
+                "trail":     [[round(x, 3), round(y, 3)] for x, y in trail.tolist()],
+                "gate":      gate,
+                "predicted": best["spell"] if best else None,
+                "accepted":  bool(best and best["success"]),
+                "scores":    [[r["spell"], r["score"]] for r in results],
+                "target":    self._target(),      # dropdown spell, or None for Any
+            })
 
-                self.trail_x.append(self._pos_x)
-                self.trail_y.append(self._pos_y)
+    def _match_trail(self, trail: np.ndarray) -> tuple:
+        """Gate and match a finished trail; returns (gate, ranked results).
+
+        Every completed cast ends with a wand animation: success is played
+        by _on_spell_confirmed, every other outcome plays the fail one.
+        """
+        if len(trail) < 20:
+            self.ble.trigger_cast_animation(success=False)
+            self._gesture_label.configure(text="gesture too short", fg=RED)
+            return "too_short", []
+
+        extent = float(np.ptp(trail, axis=0).max())
+        if extent < self.MIN_GESTURE_DEG:
+            # The matcher normalises size away, so hand drift during a
+            # grip-and-hold would otherwise be matched like a real stroke.
+            self.ble.trigger_cast_animation(success=False)
+            self._gesture_label.configure(
+                text=f"gesture too small ({extent:.0f}°)", fg=RED)
+            return "too_small", []
+
+        results = self.matcher.match_all(trail, self.library)
+
+        # With a target spell chosen, it is the only cast that can succeed.
+        # Matching still ranks every spell, so a cast that looks more like
+        # another spell is rejected rather than forced onto the target.
+        target = self._target()
+        if target:
+            for r in results:
+                r["success"] = r["success"] and r["spell"] == target
+
+        if results:
+            best = results[0]
+            # Show top-3 scores
+            score_lines = "\n".join(
+                f"{'✓' if r['success'] else ' '} {r['spell']:<14} {r['score']:.3f}"
+                for r in results[:3])
+            if target and target not in [r["spell"] for r in results[:3]]:
+                t = next(r for r in results if r["spell"] == target)
+                score_lines += f"\n  {target:<14} {t['score']:.3f}  (target)"
+            self._scores_label.configure(text=score_lines)
+
+            if best["success"]:
+                self._on_spell_confirmed(best["spell"])
+            else:
+                self.ble.trigger_cast_animation(success=False)
+                miss = (f"not {self._spell_display(target)}  "
+                        f"(closest: {self._spell_display(best['spell'])})") if target else "no match"
+                self._gesture_label.configure(text=miss, fg=RED)
+                self._redraw_trail(frozen=False)
+            return "ok", results
+
+        self.ble.trigger_cast_animation(success=False)
+        self._gesture_label.configure(text="no spells loaded", fg=TEXT_DIM)
+        self._scores_label.configure(text="—")
+        return "no_spells", []
+
+    # ── Cast labelling ────────────────────────────────────────────────────────
+    # After every cast the user must say what they cast (or discard it) before
+    # another gesture window can open.  Labelled casts go to casts/casts.jsonl
+    # for eval_matcher.py.
+
+    def _request_label(self, record: dict):
+        self._pending_cast = record
+        for w in self._label_btns.winfo_children():
+            w.destroy()
+        guess = record["predicted"] if record["accepted"] else None
+        target = record.get("target")
+        if target:
+            # Practising one spell: just confirm it, or say it wasn't a spell
+            choices = [target, NOT_A_SPELL]
+            prompt = f"Was that {self._spell_display(target)}?  (required before the next cast)"
+        else:
+            choices = sorted(self.library.names()) + [NOT_A_SPELL]
+            prompt = "What did you cast?  (required before the next cast)"
+        for i, name in enumerate(choices):
+            if name == NOT_A_SPELL:
+                text = "Not a spell"
+            elif target:
+                text = f"Yes, {self._spell_display(name)}"
+            else:
+                text = self._spell_display(name)
+            btn = tk.Button(self._label_btns, text=text,
+                            bg=GOLD_DIM if name == guess else BG3,
+                            fg=BG if name == guess else TEXT, bd=0, padx=8, pady=3,
+                            font=("Courier New", 8), activebackground=BORDER,
+                            command=lambda n=name: self._submit_label(n))
+            btn.grid(row=i // 5, column=i % 5, padx=2, pady=2, sticky="ew")
+            if name != NOT_A_SPELL:
+                btn.bind("<Enter>", lambda e, n=name: self._preview_template(n))
+                btn.bind("<Leave>", lambda e: self._preview_template(None))
+        tk.Button(self._label_btns, text="Discard", bg=BG3, fg=RED, bd=0,
+                  padx=8, pady=3, font=("Courier New", 8), activebackground=BORDER,
+                  command=lambda: self._submit_label(None)
+                  ).grid(row=len(choices) // 5, column=len(choices) % 5,
+                         padx=2, pady=2, sticky="ew")
+        self._label_prompt.configure(text=prompt, fg=GOLD)
+        self._label_frame.pack(fill="x", padx=8, pady=(4, 0),
+                               before=self.canvas.get_tk_widget())
+
+    def _submit_label(self, label: Optional[str]):
+        record, self._pending_cast = self._pending_cast, None
+        self._label_frame.pack_forget()
+        if record is None:
+            return
+        if label is None:
+            self.status_var.set("Cast discarded")
+            return
+        record["label"] = label
+        append_cast(record)
+        self._note_cast_size(record)
+        self.status_var.set(f"Cast saved as '{label}' — {count_casts()} labelled")
+
+    def _on_label_toggle(self):
+        """Turning labelling off drops any pending prompt so casting unblocks."""
+        if not self._label_casts.get() and self._pending_cast is not None:
+            self._submit_label(None)
+
+    def _on_spell_confirmed(self, spell: str):
+        """Handle a confirmed spell cast (from wand firmware or local matcher)."""
+        self.ble.trigger_cast_animation(success=True, macro=self.effects.wand_macro(spell))
+        self.ble.trigger_box_macro(self.effects.box_macro(spell))
+        self.effects.play_sound(spell)
+        self.last_spell.set(spell)
+        self.spell_history.insert(0, f"{datetime.now().strftime('%H:%M:%S')}  {spell}")
+        self._update_history()
+        if self.trail_x:
+            self.frozen_trail = (list(self.trail_x), list(self.trail_y), spell)
+        self._gesture_label.configure(text=f"✦ {spell}", fg=PURPLE)
+        self._redraw_trail(frozen=True)
+
+    def _handle_imu_samples(self, samples: list):
+        """Feed every sample to the tracker; it grows the trail only while a
+        gesture window is open and tracks world-up / gyro bias otherwise."""
+        ax, ay, az, gx, gy, gz = samples[0]
+        self._imu_label.configure(
+            text=f"a=({ax:+.2f} {ay:+.2f} {az:+.2f}) G\n"
+                 f"w=({np.degrees(gx):+5.0f} {np.degrees(gy):+5.0f} {np.degrees(gz):+5.0f}) deg/s")
+
+        if self._calibrator is not None:
+            for s in samples:
+                self._calibrator.feed_sample(*s)
+
+        n_before = len(self.trail_x)
+        self._tracker.feed_many(samples)
+        if self.gesture_active and len(self.trail_x) != n_before:
             self._redraw_trail()
 
-    def _log_event(self, dec: dict):
-        # Skip heartbeats and raw IMU burst packets — noise in the event log
-        if dec.get("type") == "heartbeat":
+    def _open_calibrator(self):
+        if self._wand_id is None:
+            self.status_var.set("Connect a wand before calibrating")
             return
-        if dec.get("type") == "unknown" and len(dec.get("raw", "")) > 16:
+        if self._calibrator is not None:
+            self._calibrator.lift()
+            return
+        self._calibrator = WandCalibrator(self.root, on_saved=self._on_calibration_saved)
+        self._calibrator.bind("<Destroy>", lambda e: e.widget is self._calibrator
+                              and setattr(self, "_calibrator", None))
+
+    def _on_calibration_saved(self, motion: dict):
+        address, name = self._wand_id
+        self._profiles.save_motion(address, name, motion)
+        self._load_motion_profile(address, name)
+
+    def _load_motion_profile(self, address: str, name: str):
+        """Rebuild the tracker from this wand's calibrated tip axis / gyro bias."""
+        self._wand_id = (address, name)
+        self._profiles.set_last_used(address, name)
+        motion = self._profiles.load_motion(address)
+        self._tracker = GestureTracker.from_profile(motion)
+        self.trail_x, self.trail_y = self._tracker.trail_x, self._tracker.trail_y
+        if motion:
+            self.status_var.set(f"{name} — motion profile loaded")
+        else:
+            self.status_var.set(f"{name} — no motion calibration yet (using defaults)")
+
+    def _log_event(self, dec: dict):
+        """Append an event to the live log (skips heartbeats and raw IMU)."""
+        evt_type = dec.get("type")
+        if evt_type in ("heartbeat", "imu"):
             return
         box = self._log_box
         box.configure(state="normal")
-        ts   = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        cat  = dec.get("category", "unknown")
+        ts    = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        cat   = dec.get("category", "unknown")
         label = dec.get("label") or dec.get("raw", "")
-        tag  = cat if cat in STATUS_COLORS else "dim"
-        # Keep log bounded
+        tag   = cat if cat in STATUS_COLORS else "dim"
         lines = int(box.index("end-1c").split(".")[0])
         if lines > self.LOG_MAX:
             box.delete("1.0", f"{lines - self.LOG_MAX}.0")
@@ -1429,201 +1267,205 @@ class WandGUI:
             box.insert("end", line + "\n")
         box.configure(state="disabled")
 
-    def _on_spell_selected(self, _event=None):
-        name = self._spell_select_var.get()
-        if name and name != "— select spell —":
-            self._show_spell_template(name)
+    # ── Trail rendering ───────────────────────────────────────────────────────
 
-    def _show_spell_template(self, spell_name: str):
-        """Draw the selected spell's SVG template onto the gesture trail plot."""
-        template = self._spell_lib.get(spell_name)
-        if template is None:
-            return
-
-        self.fig.clear()
-        self.ax = self.fig.add_subplot(111)
+    def _redraw_trail(self, frozen: bool = False):
+        ax = self.ax
+        ax.cla()
         self._style_ax()
-        self.ax.set_xlim(-10000, 10000)
-        self.ax.set_ylim(-10000, 10000)
-
-        xs = template[:, 0] * 9000
-        ys = template[:, 1] * 9000
-        n = len(xs)
-        cmap = plt.get_cmap("cool")
-        for i in range(n - 1):
-            t = i / max(n - 2, 1)
-            self.ax.plot(xs[i:i+2], ys[i:i+2], color=cmap(t),
-                         linewidth=2.5, alpha=0.9, solid_capstyle="round")
-        self.ax.scatter([xs[0]],  [ys[0]],  color=TEXT_DIM, s=30, zorder=5)
-        self.ax.scatter([xs[-1]], [ys[-1]], color=GOLD,     s=50, zorder=6)
-        self.ax.set_title(f"{spell_name}  (template)", color=GOLD_DIM,
-                          fontsize=9, pad=6, fontfamily="serif")
-        self._gesture_label.configure(text=f"template: {spell_name}", fg=GOLD_DIM)
-        self.canvas.draw_idle()
-
-    def _save_feedback(self, confirmed: bool):
-        """Save user feedback on the last match result and hide the buttons."""
-        import csv, json
-        self._feedback_frame.pack_forget()
-
-        if self._feedback_spell is None:
-            return
-
-        row = [
-            datetime.now().isoformat(),
-            self._feedback_spell,
-            round(self._feedback_score, 6) if self._feedback_score is not None else "",
-            self._feedback_matched,
-            confirmed,
-            json.dumps(self._feedback_trail) if self._feedback_trail else "",
-        ]
-
-        try:
-            with open(self._feedback_log_path, "a", encoding="utf-8", newline="") as f:
-                csv.writer(f).writerow(row)
-            status = "✓ saved" if confirmed else "✗ saved"
-            self._gesture_label.configure(
-                text=f"{self._gesture_label.cget('text')}  [{status}]",
-                fg=GREEN if confirmed else RED)
-        except Exception:
-            pass
-
-        # Clear feedback state
-        self._feedback_spell   = None
-        self._feedback_score   = None
-        self._feedback_matched = None
-        self._feedback_trail   = None
-
-    def _play_sound(self, spell_name: str):
-        """Play sounds/{spell}.wav asynchronously if it exists."""
-        path = os.path.join("sounds", f"{spell_name.lower()}.wav")
-        if os.path.isfile(path):
-            threading.Thread(
-                target=winsound.PlaySound,
-                args=(path, winsound.SND_FILENAME),
-                daemon=True
-            ).start()
-
-    # ── 2D trail rendering ─────────────────────────────────────────────────────
-
-    def _redraw_trail(self, frozen=False, success: Optional[bool] = None):
-        self.fig.clear()
 
         if frozen and self.frozen_trail:
             xs, ys, spell = self.frozen_trail
-            template = self._spell_lib.get(spell) if spell else None
-            self._draw_frozen(xs, ys, spell, template, success)
         else:
-            # Live drawing — single full-width subplot
-            self.ax = self.fig.add_subplot(111)
-            self._style_ax()
             xs = list(self.trail_x)
             ys = list(self.trail_y)
-            if len(xs) >= 2:
-                self._draw_gradient(self.ax,
-                                    np.array(xs, dtype=float),
-                                    np.array(ys, dtype=float))
-                self.ax.set_xlim(-10000, 10000)
-                self.ax.set_ylim(-10000, 10000)
+            spell = None
+
+        target = self._target()
+        if len(xs) < 2:
+            if target:
+                self._draw_target_guide(target, None)
+            else:
+                self._set_cast_view(None)
+            self.canvas.draw_idle()
+            return
+
+        xs = np.array(xs, dtype=float)
+        ys = np.array(ys, dtype=float)
+
+        # One LineCollection instead of a plot() per segment — trails now hold
+        # hundreds of points and redraw on every IMU packet.
+        segs = np.stack([np.column_stack([xs[:-1], ys[:-1]]),
+                         np.column_stack([xs[1:],  ys[1:]])], axis=1)
+        lc = LineCollection(segs, cmap="cool", linewidth=2.0, alpha=0.9,
+                            capstyle="round")
+        lc.set_array(np.linspace(0, 1, len(segs)))
+        ax.add_collection(lc)
+
+        ax.scatter([xs[0]],  [ys[0]],  color=TEXT_DIM, s=25, zorder=5)
+        ax.scatter([xs[-1]], [ys[-1]], color=GOLD,     s=45, zorder=6)
+
+        if self.gesture_active:
+            # Mid-cast: a steady view sized for a typical cast, instead of
+            # zooming in on the first few degrees and rescaling every packet
+            self._set_cast_view(np.column_stack([xs, ys]))
+        else:
+            # Finished trail: fit it with a small margin
+            pad = max(abs(xs).max(), abs(ys).max()) * 0.15 or 5
+            xc, yc = (xs.max() + xs.min()) / 2, (ys.max() + ys.min()) / 2
+            half = max((xs.max() - xs.min()), (ys.max() - ys.min())) / 2 + pad
+            ax.set_xlim(xc - half, xc + half)
+            ax.set_ylim(yc - half, yc + half)
+
+        if self._overlay and not self.gesture_active:
+            self._draw_template_overlay(xs, ys, *self._overlay)
+        elif target:
+            self._draw_target_guide(target, np.column_stack([xs, ys]))
+        elif spell:
+            ax.set_title(spell, color=PURPLE, fontsize=10, pad=6, fontfamily="serif")
+
         self.canvas.draw_idle()
 
-    def _draw_gradient(self, ax, xs, ys, alpha=0.9, lw=2.0, color_override=None):
-        """Draw a colour-gradient polyline on ax."""
-        n = len(xs)
-        cmap = plt.get_cmap("cool")
-        for i in range(n - 1):
-            t = i / max(n - 2, 1)
-            c = color_override if color_override else cmap(t)
-            ax.plot(xs[i:i+2], ys[i:i+2], color=c, linewidth=lw,
-                    alpha=alpha, solid_capstyle='round')
-        ax.scatter([xs[0]],  [ys[0]],  color=TEXT_DIM, s=20, zorder=5)
-        ax.scatter([xs[-1]], [ys[-1]], color=GOLD,     s=35, zorder=6)
+    def _draw_template_overlay(self, xs: np.ndarray, ys: np.ndarray,
+                               spell: str, kind: str):
+        """Draw a spell's SVG template over the trail, fitted to the trail's
+        centroid and larger bounding-box side, so the user can compare shapes.
 
-    def _draw_frozen(self, xs_raw, ys_raw, spell, template, success):
-        """Single plot: user trail in colour with template overlaid in white below."""
-        self.ax = self.fig.add_subplot(111)
+        kind: "match" (accepted), "guess" (best but rejected), "miss" (target
+        spell not accepted), "preview" (hover).
+        """
+        tmpl = self.library.get(spell)
+        if tmpl is None:
+            return
+        trail = np.column_stack([xs, ys])
+        t_span = float(np.ptp(tmpl, axis=0).max()) or 1.0
+        scale  = float(np.ptp(trail, axis=0).max()) / t_span
+        pts    = (tmpl - tmpl.mean(axis=0)) * scale + trail.mean(axis=0)
+
+        name = self._spell_display(spell)
+        title = {"match": f"{name}  (dashed = template)",
+                 "guess": f"closest: {name}  — not accepted",
+                 "miss":  f"target: {name}  — not accepted",
+                 "preview": f"template: {name}"}[kind]
+        colour = {"match": PURPLE, "guess": RED, "miss": RED}.get(kind, BLUE_GLOW)
+        self._draw_template(pts, colour, title, trail)
+
+    def _set_cast_view(self, trail: Optional[np.ndarray]):
+        """Axes for an Any-spell cast: centred on the start (the trail begins
+        at 0, 0) and wide enough for a typical cast drawn from any point of
+        the shape; it only grows if the trail goes beyond it."""
+        half = self._typical_extent()
+        if trail is not None and len(trail):
+            half = max(half, float(np.abs(trail).max()) * 1.1)
+        self.ax.set_xlim(-half, half)
+        self.ax.set_ylim(-half, half)
+
+    def _draw_target_guide(self, spell: str, trail: Optional[np.ndarray]):
+        """Draw the target spell before/while casting, at the size you
+        usually cast it, with its start point where the trail starts (the
+        trail begins at 0, 0)."""
+        tmpl = self.library.get(spell)
+        if tmpl is None:
+            return
+        span = float(np.ptp(tmpl, axis=0).max()) or 1.0
+        pts = (tmpl - tmpl[0]) * (self._typical_extent(spell) / span)
+        if trail is not None:
+            pts = pts + trail[0]
+        self._draw_template(pts, BLUE_GLOW,
+                            f"cast {self._spell_display(spell)}  (start at the dot)", trail)
+
+    def _draw_template(self, pts: np.ndarray, colour: str, title: str,
+                       trail: Optional[np.ndarray]):
         ax = self.ax
-        self._style_ax(ax)
-        ax.set_xlim(-10000, 10000)
-        ax.set_ylim(-10000, 10000)
+        ax.plot(pts[:, 0], pts[:, 1], color=colour, lw=6, alpha=0.25,
+                solid_capstyle="round", zorder=2)
+        ax.plot(pts[:, 0], pts[:, 1], color=colour, lw=1.2, ls="--", zorder=3)
+        ax.scatter([pts[0, 0]], [pts[0, 1]], color=colour, s=40, marker="o", zorder=4)
+        k = min(6, len(pts) - 1)
+        ax.annotate("", xy=pts[k], xytext=pts[0], zorder=4,
+                    arrowprops=dict(arrowstyle="->", color=colour, lw=1.5))
+        ax.set_title(title, color=colour, fontsize=10, pad=6, fontfamily="serif")
 
-        # ── Template overlay (drawn first so trail sits on top) ───────────────
-        if template is not None:
-            tmpl_xs = template[:, 0] * 8000
-            tmpl_ys = template[:, 1] * 8000
-            ax.plot(tmpl_xs, tmpl_ys,
-                    color="white", linewidth=3.0, alpha=0.25,
-                    solid_capstyle='round', zorder=1)
+        # Make sure the whole template (and trail) is visible
+        both = pts if trail is None else np.vstack([pts, trail])
+        lo, hi = both.min(axis=0), both.max(axis=0)
+        c, half = (lo + hi) / 2, float((hi - lo).max()) / 2 * 1.15 or 5
+        ax.set_xlim(c[0] - half, c[0] + half)
+        ax.set_ylim(c[1] - half, c[1] + half)
 
-        # ── User's normalised trail ───────────────────────────────────────────
-        xs = np.array(xs_raw, dtype=float)
-        ys = np.array(ys_raw, dtype=float)
-        if len(xs) >= 2:
-            pts = np.stack([xs, ys], axis=1)
-            pts = pts - pts.mean(axis=0)
-            s = np.abs(pts).max()
-            if s > 1e-9:
-                pts /= s
-            xs = pts[:, 0] * 8000
-            ys = pts[:, 1] * 8000
-            self._draw_gradient(ax, xs, ys)
+    # ── Typical cast sizes ────────────────────────────────────────────────────
+    # How big casts really are (degrees across), learned from labelled casts,
+    # so the trail view and the practice guide start at a realistic size.
 
-        # ── Title: spell name + result ────────────────────────────────────────
-        if spell:
-            title_color = GREEN if success else RED
-            label = "Expected shape  (white)" if template is not None else ""
-            ax.set_title(f"{spell}  |  {label}",
-                         color=title_color, fontsize=9,
-                         pad=5, fontfamily="serif")
+    def _load_cast_sizes(self):
+        self._cast_sizes = {}
+        for rec in load_casts():
+            self._note_cast_size(rec)
+
+    def _note_cast_size(self, rec: dict):
+        if rec.get("label") in (None, NOT_A_SPELL) or len(rec.get("trail", [])) < 2:
+            return
+        extent = float(np.ptp(np.asarray(rec["trail"], float), axis=0).max())
+        if extent >= self.MIN_GESTURE_DEG:          # skip attempts too small to match
+            self._cast_sizes.setdefault(rec["label"], []).append(extent)
+
+    def _typical_extent(self, spell: Optional[str] = None) -> float:
+        """Median size of past casts of this spell (2+ needed), else of all
+        spells (3+ needed), else DEFAULT_CAST_DEG."""
+        own = self._cast_sizes.get(spell, []) if spell else []
+        if len(own) >= 2:
+            return float(np.median(own))
+        every = [e for sizes in self._cast_sizes.values() for e in sizes]
+        return float(np.median(every)) if len(every) >= 3 else self.DEFAULT_CAST_DEG
+
+    # ── Target spell dropdown ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _spell_display(name: str) -> str:
+        """Library keys are lower-case file names: 'the cheering charm' → 'The Cheering Charm'."""
+        return name.title()
+
+    def _refresh_target_list(self):
+        self._target_names = {self._spell_display(n): n for n in sorted(self.library.names())}
+        values = [ANY_SPELL] + list(self._target_names)
+        self._target_combo["values"] = values
+        if self._target_var.get() not in values:
+            self._target_var.set(ANY_SPELL)
+
+    def _target(self) -> Optional[str]:
+        """Library key of the selected target spell, or None for Any."""
+        return self._target_names.get(self._target_var.get())
+
+    def _on_target_changed(self):
+        target = self._target()
+        if not self.gesture_active:
+            self._clear_trail()
+        if target:
+            self._gesture_label.configure(
+                text=f"only {self._spell_display(target)} will be accepted", fg=BLUE_GLOW)
+        self._redraw_trail()
+
+    def _preview_template(self, spell: Optional[str]):
+        """Hovering a label button previews that spell; leaving restores the match."""
+        self._overlay = (spell, "preview") if spell else self._cast_overlay
+        self._redraw_trail(frozen=bool(self.frozen_trail))
 
     def _clear_trail(self):
         self.trail_x.clear()
         self.trail_y.clear()
         self.frozen_trail = None
+        self._overlay = self._cast_overlay = None
         self.gesture_active = False
+        self._tracker.end()
         self._gesture_label.configure(text="waiting for gesture...", fg=TEXT_DIM)
-        self._feedback_frame.pack_forget()
-        self.fig.clear()
-        self.ax = self.fig.add_subplot(111)
-        self._style_ax()
-        self.canvas.draw_idle()
+        self._scores_label.configure(text="—")
+        self._redraw_trail()            # empty axes, or the target spell's guide
 
     def _on_close(self):
-        """Shut down cleanly: clear LEDs, disconnect BLE, then destroy window."""
-        self.status_var.set("Closing…")
-        self.root.update_idletasks()
-
-        # Signal the BLE worker to stop reconnecting
-        self.ble._stop = True
-
-        # If connected, fire-and-forget a clear + disconnect on the worker loop
-        if self.ble._client and self.ble.loop and self.ble.loop.is_running():
-            async def _shutdown(client):
-                try:
-                    await client.write_gatt_char(
-                        WRITE_UUID, clear_all(), response=False)
-                    await asyncio.sleep(0.2)
-                    await client.disconnect()
-                except Exception:
-                    pass
-                finally:
-                    self.ble.loop.call_soon_threadsafe(self.ble.loop.stop)
-
-            asyncio.run_coroutine_threadsafe(
-                _shutdown(self.ble._client), self.ble.loop)
-
-            # Give it up to 1.5 s to finish, then force-stop regardless
-            self.root.after(1500, self._finish_close)
-        else:
-            if self.ble.loop and self.ble.loop.is_running():
-                self.ble.loop.call_soon_threadsafe(self.ble.loop.stop)
-            self._finish_close()
-
-    def _finish_close(self):
-        try:
-            self.root.destroy()
-        except Exception:
-            pass
+        if self._gesture_timer is not None:
+            self.root.after_cancel(self._gesture_timer)
+        self.ble.stop()
+        self.root.destroy()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
