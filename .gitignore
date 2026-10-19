@@ -7,3 +7,12 @@ media/sounds/
 media/videos/
 sounds/
 videos/
+
+# Per-user state
+progress.json
+settings.json
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
