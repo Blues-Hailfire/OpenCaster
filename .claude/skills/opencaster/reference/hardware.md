@@ -21,8 +21,12 @@ to raw bytes.
   dt = 1/220).  Accel 2048 counts/g (±16 g); gyro 0.0625 °/s per count
   (±2000 °/s).  Gyro bias ≈1 °/s.  Starts with `0x31` then `0x30 00 80`
   (the manager does this) and **streams continuously** until disconnect.
-- **Axes**: the tip points along sensor +y by default (calibration
-  measures it per wand).  Level wand, tip forward: accel ≈ (0, 0, 1) g.
+- **Axes**: the tip points along sensor +y on every wand, and left/right
+  never needs flipping.  Calibration measures only gyro bias; its swipes
+  confirm tracking and are retried, never "fixed", when they read wrong.
+  A saved tip more than 25° off +y (older calibrators) is ignored at load
+  (`tracker.tip_offset_deg`).
+  Level wand, tip forward: accel ≈ (0, 0, 1) g.
   Tip right = negative gz; tip up = positive gx.  Prefer
   `GestureTracker` (world-up aware, roll-free) to raw gyro maths.
 - **Firmware spells**: `0x24 00 00 [len] name` – the wand recognises some

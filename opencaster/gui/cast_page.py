@@ -356,7 +356,7 @@ class CastPage(QWidget):
         tools = QHBoxLayout()
         tools.setSpacing(8)
         self.cal_btn = QPushButton("Calibrate")
-        self.cal_btn.setToolTip("Measure a wand's tip axis and gyro bias (30 s)")
+        self.cal_btn.setToolTip("Measure a wand's gyro bias and check its tracking (20 s)")
         self.cal_btn.clicked.connect(self._calibrate_clicked)
         tools.addWidget(self.cal_btn)
         for text, tip, fn in (

@@ -19,7 +19,8 @@ Rules:
   - With an allowed set (a clash duel's battle spells), casts are ranked
     against those spells only.
   - With label_casts on, each cast must be labelled before the next opens.
-  - While calibrating, casts aren't assessed.
+  - While calibrating, casts aren't assessed; starting it discards a cast
+    still waiting for its label.
   - Pad overrides force pads on (a workaround for a broken sensor).
 
 Events:
@@ -209,6 +210,10 @@ class CastSession:
     # calibration ----------------------------------------------------------------
 
     def start_calibration(self):
+        # An unanswered label would refuse every pad hold while calibrating
+        # ("blocked"); calibrating instead of answering discards that cast.
+        if self.pending is not None:
+            self.label(None)
         self.calibrator = MotionCalibrator(lambda s: self._emit("calibration", s))
         self.calibrator.start()
 

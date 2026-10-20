@@ -6,9 +6,13 @@ watching for stillness / motion; feed it every IMU sample and render
 `state` however you like (the GUI shows a dialog, a CLI could print it).
 
   1. Rest         lay the wand flat and still      → gyro bias + noise
-  2. Tip up       point the tip at the ceiling     → tip axis (sensor frame)
-  3. Swipe up     point at the screen, swipe UP    → tip sign check
-  4. Swipe right                                   → left/right sign check
+  2. Swipe up     point at the screen, swipe UP    → confirms tracking reads up
+  3. Swipe right                                   → confirms it reads right
+
+The tip axis and left/right sign are the same on every Magic Caster wand,
+so nothing here changes them: a swipe that reads the wrong way is the
+user's mistake and is asked for again.  (Measuring the tip from a "point it
+at the ceiling" pose saved a sideways tip whenever the wand was held level.)
 
 `result` is the profile "motion" block:
     {"tip_axis": [x,y,z], "gyro_bias": [x,y,z] (rad/s), "gyro_noise_dps": [...],
@@ -21,7 +25,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .tracker import GyroBias, run_pipeline
+from .tracker import DEFAULT_TIP_AXIS, GyroBias, run_pipeline
 
 STILL_SPAN   = GyroBias.STILL_SPAN   # rad/s peak deviation that counts as still (on a table)
 HAND_SPAN    = np.radians(12)        # looser: hand-held "still" has tremor
@@ -30,13 +34,10 @@ COLLECT_N    = 330                   # samples (1.5 s) collected once still
 MOVE_RATE    = np.radians(60)        # rad/s - a swipe has started
 SWIPE_MAX_N  = 440                   # samples (2 s) - a swipe can't take longer
 PAUSE_N      = 198                   # samples (0.9 s) showing a result before moving on
-SNAP_DEG     = 25.0                  # snap tip axis to a sensor axis if this close
 
 STEPS = (
     {"id": "rest", "icon": "━", "title": "Lay the wand flat",
      "instruction": "Put the wand down on a table and don't touch it."},
-    {"id": "tipup", "icon": "↑", "title": "Point the tip at the ceiling",
-     "instruction": "Hold the wand vertical, tip straight up, as still as you can."},
     {"id": "swipe_up", "icon": "↑", "title": "Swipe UP",
      "instruction": "Point the wand at the screen, hold still for a moment,\n"
                     "then raise the tip smoothly UPWARD and stop."},
@@ -52,7 +53,9 @@ class MotionCalibrator:
         self.step = -1
         self.phase = "intro"     # intro | settle | collect | armed | swiping | pause | done
         self.status, self.status_kind = "", "info"
-        self.result: dict = {}
+        # Fixed for the hardware; saved anyway so a recalibration replaces a
+        # bad block from an older calibrator.
+        self.result: dict = {"tip_axis": list(DEFAULT_TIP_AXIS), "params": {"flip_x": False}}
         self._win: deque = deque(maxlen=STILL_WINDOW)
         self._buf: list = []
         self._pre: list = []
@@ -72,7 +75,7 @@ class MotionCalibrator:
     def state(self) -> dict:
         if self.phase == "intro":
             info = {"id": "intro", "icon": "✦", "title": "Motion calibration",
-                    "instruction": "Four quick steps, about 30 seconds.\n"
+                    "instruction": "Three quick steps, about 20 seconds.\n"
                                    "Each step advances on its own once the wand is held right."}
         elif self.done:
             info = {"id": "done", "icon": "✦", "title": "Calibration complete",
@@ -91,9 +94,10 @@ class MotionCalibrator:
     def summary(self) -> str:
         r = self.result
         bias = np.degrees(r.get("gyro_bias", [0, 0, 0]))
-        return (f"Tip axis   {np.round(r.get('tip_axis', [0, 0, 0]), 2).tolist()}\n"
-                f"Gyro bias  {bias.round(2).tolist()} deg/s\n"
-                f"Flip X     {r.get('params', {}).get('flip_x', False)}")
+        up = r.get("swipe_up_check", [0, 0])[1]
+        right = r.get("swipe_check", [0, 0])[0]
+        return (f"Gyro bias  {bias.round(2).tolist()} deg/s\n"
+                f"Swipes     {up:.0f}° up, {right:.0f}° right")
 
     # ── sample intake ─────────────────────────────────────────────────────────
 
@@ -123,12 +127,12 @@ class MotionCalibrator:
         if len(self._win) == STILL_WINDOW:
             g = np.array(self._win)[:, 3:]
             still = np.abs(g - g.mean(0)).max() < span
-        if step in ("rest", "tipup"):
-            self._feed_static(step, s, still, span)
+        if step == "rest":
+            self._feed_rest(s, still, span)
         else:
             self._feed_swipe(s, still)
 
-    def _feed_static(self, step: str, s: tuple, still: bool, span: float):
+    def _feed_rest(self, s: tuple, still: bool, span: float):
         if self.phase == "settle":
             if still:
                 self.phase = "collect"
@@ -142,30 +146,14 @@ class MotionCalibrator:
             return
         self._buf.append(s)
         if len(self._buf) >= COLLECT_N:
-            self._finish_static(step, np.array(self._buf))
+            self._finish_rest(np.array(self._buf))
 
-    def _finish_static(self, step: str, arr: np.ndarray):
-        acc, gyr = arr[:, :3], arr[:, 3:]
-        if step == "rest":
-            self.result["gyro_bias"] = gyr.mean(0).tolist()
-            self.result["gyro_noise_dps"] = np.degrees(gyr.std(0)).round(3).tolist()
-            self._set_status(f"bias  {np.degrees(gyr.mean(0)).round(2)} deg/s\n"
-                             f"noise {np.degrees(gyr.std(0)).round(2)} deg/s", "ok")
-        else:
-            tip = acc.mean(0)
-            tip = tip / np.linalg.norm(tip)
-            k = int(np.argmax(np.abs(tip)))
-            off_deg = float(np.degrees(np.arccos(min(1.0, abs(tip[k])))))
-            snapped = off_deg <= SNAP_DEG
-            if snapped:
-                tip = np.zeros(3)
-                tip[k] = np.sign(acc.mean(0)[k])
-            self.result["tip_axis"] = tip.round(4).tolist()
-            self.result["tip_raw_offset_deg"] = round(off_deg, 1)
-            name = ("+" if tip[k] > 0 else "-") + "xyz"[k]
-            self._set_status(f"tip axis {name}" + (
-                f"  ({off_deg:.0f}° off-axis, snapped)" if snapped
-                else f"  (not snapped: {off_deg:.0f}° off-axis)"), "ok")
+    def _finish_rest(self, arr: np.ndarray):
+        gyr = arr[:, 3:]
+        self.result["gyro_bias"] = gyr.mean(0).tolist()
+        self.result["gyro_noise_dps"] = np.degrees(gyr.std(0)).round(3).tolist()
+        self._set_status(f"bias  {np.degrees(gyr.mean(0)).round(2)} deg/s\n"
+                         f"noise {np.degrees(gyr.std(0)).round(2)} deg/s", "ok")
         self._pause_then_next()
 
     def _feed_swipe(self, s: tuple, still: bool):
@@ -199,21 +187,15 @@ class MotionCalibrator:
             self._set_status(f"that read as ({dx:+.0f}°, {dy:+.0f}°) - sweep wider and "
                              f"straighter, try again", "error")
             return
-        if vertical:
-            # Negating the tip inverts vertical only, so this is safe to
-            # settle before the left/right check.
-            flipped = dy < 0
-            if flipped:
-                self.result["tip_axis"] = [-v for v in self.result["tip_axis"]]
-            self.result["swipe_up_check"] = [round(dx, 1), round(dy, 1)]
-            self._set_status(f"swipe read as {abs(dy):.0f}° " + (
-                "down → tip was upside-down, fixed" if flipped else "up ✓"), "ok")
-        else:
-            flip = dx < 0
-            self.result["params"] = {"flip_x": bool(flip)}
-            self.result["swipe_check"] = [round(dx, 1), round(dy, 1)]
-            self._set_status(f"swipe read as {abs(dx):.0f}° "
-                             + ("left → flipping X" if flip else "right ✓"), "ok")
+        if main < 0:
+            # The wand's axes are fixed, so the wrong way round is a mistaken
+            # swipe – "fixing" the profile for it would mirror every cast.
+            self._goto(self.step)
+            self._set_status(f"that read as {abs(main):.0f}° " + ("down - swipe UP" if vertical
+                             else "left - swipe RIGHT") + ", try again", "error")
+            return
+        self.result["swipe_up_check" if vertical else "swipe_check"] = [round(dx, 1), round(dy, 1)]
+        self._set_status(f"swipe read as {main:.0f}° " + ("up ✓" if vertical else "right ✓"), "ok")
         self._pause_then_next()
 
     # ── helpers ───────────────────────────────────────────────────────────────

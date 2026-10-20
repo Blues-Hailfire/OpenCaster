@@ -7,9 +7,12 @@ to the pages.  Nothing in the GUI polls.
 import ctypes
 import logging
 import sys
+from pathlib import Path
+from typing import Optional
 
-from PySide6.QtCore import QPointF, Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QByteArray, QPointF, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QHBoxLayout, QLabel,
                                QMainWindow, QPushButton, QStackedWidget, QVBoxLayout)
 
@@ -31,9 +34,53 @@ from .widgets import Backdrop, ConnectionPill, draw_star
 WAND_EVENTS = {"pads", "window_open", "trail", "tap", "timeout", "cast", "blocked",
                "label_needed", "labelled", "calibrating", "calibration"}
 CAST, SPELLBOOK, DUEL, ENVIRONMENT = 0, 1, 2, 3
+SUPPORT_URL = "https://www.buymeacoffee.com/hailfire"
+ASSETS = Path(__file__).parent / "assets"
+
+
+def _svg_pixmap(name: str, size: int, dpr: float = 1.0, recolor=()) -> Optional[QPixmap]:
+    """Render assets/<name> square; recolor: (old, new) colour swaps in the SVG."""
+    path = ASSETS / name
+    if not path.is_file():
+        return None
+    svg = path.read_text(encoding="utf-8")
+    for old, new in recolor:
+        svg = svg.replace(old, new)
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    pm = QPixmap(round(size * dpr), round(size * dpr))
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    renderer.render(p)
+    p.end()
+    pm.setDevicePixelRatio(dpr)
+    return pm
+
+
+def logo_pixmap(size: int, dpr: float = 1.0) -> QPixmap:
+    """The header mark: the logo in its dark-background colours (white ring,
+    gold star), so the navy ring doesn't vanish into the header."""
+    pm = _svg_pixmap("opencaster-logo-1c.svg", size, dpr,
+                     (("#17142A", "#FFFFFF"), ("#6B4EFF", "#FFC94A")))
+    if pm is None:
+        pm = QPixmap(round(size * dpr), round(size * dpr))
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        draw_star(p, QPointF(pm.width() / 2, pm.height() / 2), pm.width() * 0.4)
+        p.end()
+        pm.setDevicePixelRatio(dpr)
+    return pm
 
 
 def app_icon() -> QIcon:
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pm = _svg_pixmap("opencaster-icon-1c-dark.svg", size)
+        if pm is not None:
+            icon.addPixmap(pm)
+    if not icon.isNull():
+        return icon
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -104,10 +151,22 @@ class MainWindow(QMainWindow):
     def _build_header(self) -> QHBoxLayout:
         h = QHBoxLayout()
         h.setSpacing(8)
-        logo = QLabel("✦  OpenCaster")
+        mark = QLabel()
+        mark.setPixmap(logo_pixmap(34, self.devicePixelRatioF()))
+        h.addWidget(mark)
+        logo = QLabel("OpenCaster")
         logo.setFont(T.font(21, serif=True))
         logo.setStyleSheet(f"color: {T.GOLD};")
         h.addWidget(logo)
+        h.addSpacing(10)
+        coffee = QPushButton("☕ Buy me a coffee")
+        coffee.setToolTip(SUPPORT_URL)
+        coffee.setCursor(Qt.PointingHandCursor)
+        coffee.setStyleSheet("QPushButton { background: #FFDD00; color: #000000; border: 1px solid #000000;"
+                             " border-radius: 8px; padding: 5px 14px; font-size: 11pt; font-weight: 600; }"
+                             " QPushButton:hover { background: #FFE843; }")
+        coffee.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(SUPPORT_URL)))
+        h.addWidget(coffee)
         h.addSpacing(14)
         self.nav = QButtonGroup(self)
         for i, text in enumerate(("Cast", "Spellbook", "Duel", "Environment")):

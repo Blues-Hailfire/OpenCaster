@@ -5,6 +5,14 @@ An effect is a tuple of (bytes, wait_seconds) steps: write the bytes, then
 wait before the next write.  The device plays one effect at a time and a new
 one cancels the old, so effects never interleave.
 
+Animation rule: the tip (group 0) glows only for a successful cast – the
+spell's payoff (`success`, spellbook macros), what it leaves lit (the
+Wingardium steering `glow`, a clash's `locked_in`) – and for the connect
+`welcome`.  Every other cue lights the body (groups 1-3) with `_body`, which
+also fades the tip out: a new effect doesn't reset LEDs it never sets, so a
+cue that merely skipped the tip would leave the last spell's glow on it.
+Direct control (`light`, `glow`, `solid` from the API/CLI) is exempt.
+
 Two sources:
   - Built-in animations (connect, cast window, success, fail, clear).
   - Original-app macros (spellbook.json `macros_payoff`), encoded the same
@@ -43,10 +51,16 @@ BLUE = (0, 0, 255)
 GOLD = (255, 180, 0)
 WHITE = (255, 255, 255)
 TIP_TO_HANDLE = (0, 1, 2, 3)
+BODY = (1, 2, 3)                # every group but the tip
 
 
 def _scale(rgb: tuple, k: float) -> tuple:
     return tuple(max(0, min(255, int(c * k))) for c in rgb)
+
+
+def _body(rgb: tuple, ms: int, groups=BODY) -> bytes:
+    """One frame: `groups` (body groups) fade to rgb, the tip fades out."""
+    return p.frame(p.changeled(0, 0, 0, 0, ms), *(p.changeled(g, *rgb, ms) for g in groups))
 
 
 def _buzz_pulse(intensity: int, on_s: float, off_s: float = 0.0) -> list:
@@ -75,13 +89,14 @@ def glow(r: int = 0, g: int = 0, b: int = 255, fade_ms: int = 2000) -> Effect:
 
 
 def breathe(rgb: tuple = BLUE, seconds: float = 9.0, period: float = 1.6) -> Effect:
-    """Cast-window glow: a quick bloom to full colour, then a slow breath
-    between full and 35% brightness until cancelled (or `seconds` pass)."""
+    """Cast-window glow on the body: a quick bloom to full colour, then a
+    slow breath between full and 35% brightness until cancelled (or
+    `seconds` pass).  The tip stays dark until the spell succeeds."""
     dim, half = _scale(rgb, 0.35), period / 2
-    out = _prefixed(p.all_groups(*rgb, 150), 0.25)
+    out = _prefixed(_body(rgb, 150), 0.25)
     for _ in range(max(1, int(seconds / period))):
-        out += _prefixed(p.all_groups(*dim, int(half * 1000)), half)
-        out += _prefixed(p.all_groups(*rgb, int(half * 1000)), half)
+        out += _prefixed(_body(dim, int(half * 1000)), half)
+        out += _prefixed(_body(rgb, int(half * 1000)), half)
     return tuple(out)
 
 
@@ -110,8 +125,13 @@ def success(rgb: tuple = GOLD) -> Effect:
 
 def fail() -> Effect:
     """Faint red wash on groups 1-3, no buzz: cast not recognised."""
-    return tuple(_prefixed(p.all_groups(45, 0, 0, 150, groups=range(1, 4)), 0.18)
+    return tuple(_prefixed(_body((45, 0, 0), 150), 0.18)
                  + [(p.all_groups(0, 0, 0, 500), 0.0)])
+
+
+def color_preview(rgb: tuple) -> Effect:
+    """A wand's colour was changed: show it on the body for a moment."""
+    return tuple(_prefixed(_body(rgb, 250), 1.2) + [(p.all_groups(0, 0, 0, 250), 0.0)])
 
 
 def solid(color: str) -> Effect:
@@ -123,14 +143,15 @@ def solid(color: str) -> Effect:
 
 def countdown_tick(rgb: tuple = BLUE) -> Effect:
     """One countdown beat: a soft pulse in the player's colour."""
-    return tuple(_prefixed(p.all_groups(*_scale(rgb, 0.6), 80), 0.22)
+    return tuple(_prefixed(_body(_scale(rgb, 0.6), 80), 0.22)
                  + [(p.all_groups(0, 0, 0, 250), 0.0)])
 
 
 def go(rgb: tuple = BLUE) -> Effect:
-    """'Cast!': a white flash from the tip that settles into the player's colour."""
-    return tuple(_prefixed(p.frame(p.changeled(0, *WHITE, 60)), 0.08)
-                 + _wave(rgb, fade_ms=100, step_s=0.04)
+    """'Cast!': a white flash just below the tip that runs down the body
+    into the player's colour."""
+    return tuple(_prefixed(_body(WHITE, 60, groups=(1,)), 0.08)
+                 + _wave(rgb, order=BODY, fade_ms=100, step_s=0.04)
                  + [(p.EFFECT_PREFIX, 0.6), (p.all_groups(0, 0, 0, 900), 0.0)])
 
 
@@ -143,18 +164,21 @@ def locked_in(rgb: tuple = BLUE) -> Effect:
 
 
 def round_lost() -> Effect:
-    """The other player got there first: a red fade from the handle."""
-    return tuple(_wave((120, 0, 0), order=(3, 2, 1, 0), fade_ms=200, step_s=0.08)
+    """The other player got there first: a red fade up from the handle."""
+    return tuple(_prefixed(_body((120, 0, 0), 200, groups=(3,)), 0.08)
+                 + _wave((120, 0, 0), order=(2, 1), fade_ms=200, step_s=0.08)
                  + [(p.EFFECT_PREFIX, 0.4), (p.all_groups(0, 0, 0, 800), 0.0)])
 
 
 def duel_won(rgb: tuple = GOLD) -> Effect:
-    """Victory: three buzzes and a rainbow cascade, ending in the player's colour."""
+    """Victory: three buzzes and a rainbow cascade down the body, ending in
+    the player's colour."""
     out = _buzz_pulse(150, 0.12, 0.08) + _buzz_pulse(150, 0.12, 0.08) + _buzz_pulse(200, 0.3, 0.1)
     for i in range(16):
-        out += _prefixed(p.frame(*(p.changeled(grp, *p.hue_to_rgb((i + grp * 2) / 16), 90)
-                                   for grp in range(4))), 0.09)
-    out += _prefixed(p.all_groups(*rgb, 300), 1.2)
+        out += _prefixed(p.frame(p.changeled(0, 0, 0, 0, 90),
+                                 *(p.changeled(grp, *p.hue_to_rgb((i + grp * 2) / 16), 90)
+                                   for grp in BODY)), 0.09)
+    out += _prefixed(_body(rgb, 300), 1.2)
     out.append((p.all_groups(0, 0, 0, 1500), 0.0))
     return tuple(out)
 

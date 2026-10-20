@@ -6,13 +6,13 @@ from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QProgressBar, QPush
 
 from . import theme as T
 
-STEP_COLORS = {"rest": T.TEXT_DIM, "tipup": T.TEAL, "swipe_up": T.BLUE,
+STEP_COLORS = {"rest": T.TEXT_DIM, "swipe_up": T.BLUE,
                "swipe_right": T.BLUE, "done": T.TEAL, "intro": T.GOLD}
 STATUS_COLORS = {"info": T.TEXT_DIM, "ok": T.TEAL, "error": T.RED, "ready": T.BLUE}
 
 
 class CalibrationDialog(QDialog):
-    """Begin → four self-advancing steps → Save.  The core does the work;
+    """Begin → three self-advancing steps → Save.  The core does the work;
     this dialog sends start/finish and renders "calibration" events."""
 
     def __init__(self, bridge, address: str, label: str = "", parent=None):
@@ -40,7 +40,7 @@ class CalibrationDialog(QDialog):
         self.title = QLabel("Motion calibration")
         self.title.setFont(T.font(15, serif=True))
         self.title.setAlignment(Qt.AlignCenter)
-        self.instruction = QLabel("Four quick steps, about 30 seconds.\n"
+        self.instruction = QLabel("Three quick steps, about 20 seconds.\n"
                                   "Each step advances on its own once the wand is held right.")
         self.instruction.setAlignment(Qt.AlignCenter)
         self.instruction.setWordWrap(True)

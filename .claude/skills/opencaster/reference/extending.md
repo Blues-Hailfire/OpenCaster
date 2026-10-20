@@ -63,6 +63,10 @@ a wand (window_open → trail events → cast), so engines never special-case it
   every spell to have one).
 
 ## A new wand effect
+- **Tip rule:** only a successful cast (its payoff and what it leaves lit)
+  and the connect `welcome` may light the tip (group 0).  Any other cue
+  uses `_body(rgb, ms)` – body groups lit *and* the tip faded out, because
+  a new effect leaves LEDs it doesn't set as they were.
 - Add a function to `opencaster/wand/effects.py` built from proven
   commands (`_prefixed`, `p.all_groups`, `p.changeled`, `_buzz_pulse`,
   waits), register it in `BUILTIN` if the API should offer it, and list it

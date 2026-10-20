@@ -1,5 +1,38 @@
 # OpenCaster
 
+<a href="https://www.buymeacoffee.com/hailfire"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=hailfire&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="42"></a>
+
+## 🎃 Happy Halloween – the first release!
+
+Hi everyone, happy Halloween!  This is the first release of this project,
+and there's a lot of cool stuff to unpack here.  For starters, it's a
+toolkit to build your own stuff with the Magic Caster wand: OpenCaster is
+broken down into [separate modules](#architecture) so other applications
+can use and reuse parts of it.  Not to mention a
+[Claude skills package](.claude/skills/opencaster/SKILL.md) to make life
+easy.  It's my hope we'll add support for things like TVs and smart home
+devices, but if you beat me to it, there's an [API](#control-api) – go wild!
+
+Some of the coolest features include the return of [duelling](#wizards-duel)!
+Duel your friends!  Or an NPC if you need people, I'm sorry.  There are
+three duel modes, with Duelling Club supporting up to 5 players.  (Yes, you
+can connect more than one wand.)  The Spellbook is back!  (Media coming
+soon – we have it, we just have to finalize it.)  I've also added a fun
+[environment mode](#environment-the-enchanted-jack-o-lantern): cast spells
+and blow up some pumpkins!  I highly recommend giving Wingardium Leviosa a
+go.
+
+What I could really use from all of you is to download the application and
+cast some spells!  Then put in a pull request with the training data you've
+gathered ([here's how](#contributing)) – the more I get, the better
+detection will be.
+
+Lastly, I love contributions, and not just money: feel free to bolt some
+stuff on, make a pull request, and we can build a better application
+together!
+
+---
+
 An unofficial, open-source reimplementation of the Warner Bros. Magic Caster
 Wand experience.  OpenCaster talks to the wand directly over Bluetooth LE: it
 tracks your gesture with the wand's gyro, recognises it against 52 spell
@@ -46,11 +79,23 @@ and is not affiliated with or endorsed by Warner Bros.
 - [How recognition works](#how-recognition-works)
 - [Protocol reference](#protocol-reference)
 - [Project files](#project-files)
+- [Contributing](#contributing)
 - [References](#references)
 
 ---
 
 ## Quick start
+
+**Windows, the easy way:** double-click **`setup.bat`**.  It finds (or
+offers to install) Python, installs everything OpenCaster needs into
+`%LOCALAPPDATA%\OpenCaster`, and adds **OpenCaster** to your Desktop and
+Start Menu.  Run it again any time to update.  If the app doesn't start,
+use the **OpenCaster (troubleshoot)** shortcut to see the error.
+
+**macOS / Linux:** `bash setup.sh` does the same and creates an
+`opencaster` launcher (plus an app-menu entry on Linux).
+
+**By hand:**
 
 ```bash
 pip install -r requirements.txt
@@ -62,7 +107,7 @@ python OpenCaster_GUI.py
    Without them casting still works: the wand plays a generic pulse in its
    colour on success and the spellbook shows shapes only.
 2. **Launch:** the app scans for wands and boxes and connects automatically.
-3. **Calibrate:** press **Calibrate** once per wand for the best accuracy.
+3. **Calibrate (optional):** press **Calibrate** once per wand to measure its gyro bias.
 4. **Cast:** hold all four touch pads, draw the spell, release.
 
 Requires Python 3.11+.  Sounds and videos play through Qt Multimedia, so
@@ -91,8 +136,9 @@ for every connected wand (its colour, nickname and battery) and any boxes;
 
 ### Casting
 
-- **Start:** hold all four touch pads.  The wand breathes in its colour
-  while the gesture window is open, the trail is drawn live with sparkles
+- **Start:** hold all four touch pads.  The wand's body breathes in its
+  colour while the gesture window is open (the tip stays dark until a spell
+  succeeds), the trail is drawn live with sparkles
   at the tip, and a soft wand sound plays.
 - **End:** release any pad (or wait 8 s).  The trail is then matched.
 - **Quick taps:** releasing within 0.5 s isn't counted as a cast.
@@ -121,7 +167,8 @@ can then be cast; a cast that looks more like another spell is rejected with
 
 With **Label casts** on (the default), each cast must be labelled before the
 next one can start on that wand: one of the closest spells, any other spell,
-*Not a spell*, or *Discard*.  Hovering a spell previews its shape on the
+*Not a spell*, or *Discard*.  Starting a calibration discards a cast still
+waiting for its label.  Hovering a spell previews its shape on the
 trail.  While practising, the question is just "Was that Lumos?".  Labelled
 trails go to `casts/casts.jsonl` for tuning (see
 [Tuning recognition](#tuning-recognition)).
@@ -155,16 +202,20 @@ the API); per-wand colour and nickname in `wand_profiles.json`.
 ### Calibration
 
 Press **Calibrate** (or **Calibrate…** in a wand's settings) while
-connected.  Four self-advancing steps, about 30 s:
+connected.  Three self-advancing steps, about 20 s:
 
 1. Lay the wand flat → gyro bias and noise
-2. Point the tip at the ceiling → tip axis
-3. Swipe up → confirms the tip sign (catches a handle-up pose in step 2)
-4. Swipe right → confirms the left/right sign
+2. Swipe up → confirms tracking reads up
+3. Swipe right → confirms it reads right
 
-The result is saved as a `motion` block for that wand in `wand_profiles.json`
-(keyed by MAC address) and loaded on every connect.  Without it, defaults are
-used (tip +y, bias learned on the fly).
+The tip axis and left/right sign are the same on every wand, so the swipes
+only confirm them: one that reads the wrong way (or too small or crooked)
+is asked for again.  The result is saved as a `motion` block for that wand
+in `wand_profiles.json` (keyed by MAC address) and loaded on every connect.
+Without it, defaults are used (tip +y, bias learned on the fly), so
+calibrating is optional.  A tip more than 25° off +y, saved by an older
+calibration with the wand held wrong, is ignored at load: only its gyro
+bias is used.
 
 **Diagnostics** shows match scores, the live IMU samples and an event log.
 
@@ -501,11 +552,17 @@ a wand macro fall back to a generic pulse in the wand's colour.  Colovaria's
 | Effect | When |
 |--------|------|
 | `welcome` | Connect: the wand's colour sweeps handle → tip, two buzzes, a glow that fades out |
-| `breathe` | Cast window open: a bloom, then a slow breath in the wand's colour |
+| `breathe` | Cast window open: a bloom, then a slow breath in the wand's colour (body only) |
 | `success` | Spell without its own macro: buzz, colour wave tip → handle, white flash |
-| `fail` | Failed cast: a faint red wash, no buzz |
-| `countdown`, `go`, `round_lost`, `duel_won` | Duel cues |
+| `fail` | Failed cast: a faint red wash on the body, no buzz |
+| `countdown`, `go`, `round_lost`, `duel_won` | Duel cues (body only) |
 | `locked_in` | Clash pick made: one buzz and a dim glow in the wand's own colour, giving nothing away |
+
+**The tip only glows for a successful cast** (the spell's own light, the
+Wingardium steering glow, a clash pick) and for the connect animation.
+Every other cue lights the body (groups 1–3) and fades the tip out, so a
+spell's leftover glow never sits on the tip through the next cast window.
+The API's direct `light`/`glow` commands are exempt.
 
 They use only commands already proven on the wand (`0x60` prefix, `changeled`
 fades, host-timed waits, the existing buzz pattern).
@@ -669,8 +726,8 @@ Measured on hardware:
 - Accel 2048 counts/g (±16 g).  Gyro 0.0625 °/s per count (±2000 °/s); fast
   flicks can clip it.
 - Gyro bias ≈1 °/s, drifting slowly.  Still-noise 0.1–0.7 °/s.
-- The tip defaults to sensor **+y** (both rest poses read ≈0 g on y, and swing
-  centripetal force lands on y).  **Calibrate** measures it per wand.
+- The tip is sensor **+y** (both rest poses read ≈0 g on y, and swing
+  centripetal force lands on y) on every wand, so it isn't calibrated.
 
 ---
 
@@ -679,6 +736,7 @@ Measured on hardware:
 | Path | Purpose |
 |------|---------|
 | `OpenCaster_GUI.py` | Starts the GUI |
+| `setup.bat` / `setup.ps1`, `setup.sh` | One-step setup: Python check, private environment, packages, shortcuts / launcher |
 | `opencaster/wand/` | **Wand link** (bleak only): `protocol.py` UUIDs, opcodes, parsing, frame builders · `effects.py` built-in animations and spellbook macro encoding · `device.py` one BLE link · `manager.py` scanning, auto-connect, reconnect, boxes · `__main__.py` headless CLI |
 | `opencaster/casting/` | **Spell assessment** (numpy/scipy only): `tracker.py` gyro gesture tracker · `shapes.py` SVG templates · `matcher.py` DTW recogniser and thresholds · `session.py` casting state machine · `calibration.py` motion calibration logic · `castlog.py` labelled casts · `profiles.py` per-wand calibration · `__main__.py` evaluate / replay CLI |
 | `opencaster/spellbook.py` | Original spell data, cast colours, sounds, videos; mastery progress |
@@ -689,7 +747,7 @@ Measured on hardware:
 | `opencaster/environment.py` | The enchanted jack-o'-lantern's rules (pure logic) |
 | `opencaster/api/` | Control API: `server.py` (HTTP + SSE), `client.py` (stdlib client), `__main__.py` CLI |
 | `opencaster/core.py` | Wires the wands to casting, effects, duels and the API; `python -m opencaster` runs it headless |
-| `opencaster/gui/` | PySide6 interface: cast page (a stage per wand), spellbook, duel (quick-draw, clash and Duelling Club; `elements.py` wheel and legend), environment (`pumpkin.py` scene), settings, calibration |
+| `opencaster/gui/` | PySide6 interface: cast page (a stage per wand), spellbook, duel (quick-draw, clash and Duelling Club; `elements.py` wheel and legend), environment (`pumpkin.py` scene), settings, calibration; `assets/` holds the logo and app icon |
 | `tools/` | Spell authoring: `spell_editor.py`, `gesture_png_to_svg.py`, `gesture_waypoints.json` |
 | `spells/` | Spell templates (52 SVGs, used for recognition and the trail guide) |
 | `spells/icons/` | Original gesture PNGs by eigger (MIT), shown on spell cards |
@@ -697,6 +755,27 @@ Measured on hardware:
 | `wand_profiles.json` | Per-wand calibration, colour, nickname and auto-connect |
 | `media/` | Spellbook and media pack (gitignored, supply your own) |
 | `Bluetooth Capture/` | Original btsnoop capture of the official app |
+
+---
+
+## Contributing
+
+**Share your casts – it's the most useful thing you can do.**  Recognition
+gets better with every honestly labelled cast from different people and
+wands.
+
+1. Keep **Label casts** on (the default) and cast spells.  After each cast,
+   pick the spell you *meant* to cast – even when OpenCaster guessed wrong –
+   or **Not a spell** for a fumble.  That's what makes the data useful.
+2. Your casts are appended to `casts/casts.jsonl`.
+3. Fork this repository, commit your `casts/casts.jsonl`, and open a pull
+   request.  Each record holds the gesture trail, the labels and scores, a
+   timestamp and your wand's Bluetooth address – nothing else.
+
+**Code, spells and ideas** are just as welcome: bolt something on and open
+a pull request.  [Architecture](#architecture) shows how the pieces fit,
+and the Claude skill in `.claude/skills/opencaster/` describes how
+features, spells and effects are built and tested without a wand.
 
 ---
 

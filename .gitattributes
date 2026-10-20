@@ -1,0 +1,4 @@
+# Scripts must keep their native line endings whatever core.autocrlf says
+*.sh  text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

@@ -17,3 +17,8 @@ wand_profiles.json
 # Python
 __pycache__/
 *.pyc
+
+# Setup / builds
+.venv/
+build/
+dist/

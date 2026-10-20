@@ -3,8 +3,8 @@ TrailCanvas — the live gesture trail (tip direction in degrees), painted
 with QPainter.  Repaints only when a new trail batch or overlay arrives.
 
 View rules (kept from the original matplotlib view):
-  - Mid-cast: a steady view centred on the start, sized for a typical cast,
-    growing only if the stroke runs past it.
+  - Mid-cast: a steady view centred on the start, ±30°, growing only if
+    the stroke runs past it.
   - Finished: fitted to the trail, with the matched/closest template drawn
     over it (fitted to the trail's centroid and size).
   - Practising one spell: its template is drawn as a guide at your typical
@@ -25,6 +25,7 @@ from .widgets import Animator, Particles
 TRAIL_START = np.array([0x5e, 0xea, 0xd4], float)   # teal
 TRAIL_END   = np.array([0xd9, 0x6b, 0xff], float)   # violet-magenta
 TITLE_FADE_S = 0.3
+START_HALF_DEG = 30.0                                # cast view: ±30° around the start
 
 
 class TrailCanvas(QWidget):
@@ -105,7 +106,7 @@ class TrailCanvas(QWidget):
             lo, hi = both.min(axis=0), both.max(axis=0)
             c, half = (lo + hi) / 2, float((hi - lo).max()) / 2 * 1.15 or 5.0
         elif trail is None or self.live:              # cast view around the start
-            half = self.typical(None)
+            half = START_HALF_DEG
             if trail is not None:
                 half = max(half, float(np.abs(trail).max()) * 1.1)
             c = np.zeros(2)

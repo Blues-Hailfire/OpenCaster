@@ -21,15 +21,21 @@ still-noise 0.1-0.7 deg/s.  Samples are (ax, ay, az, gx, gy, gz) in g and
 rad/s, sensor frame.
 """
 
+import logging
 from typing import Optional
 
 import numpy as np
 
+log = logging.getLogger(__name__)
+
 SAMPLE_RATE_HZ = 220.0
 DT             = 1.0 / SAMPLE_RATE_HZ
 
-# Tip axis in sensor coordinates; the calibrator measures it per wand.
-DEFAULT_TIP_AXIS = (0.0, 1.0, 0.0)
+# Tip axis in sensor coordinates – the same on every Magic Caster wand.
+# Older calibrators measured it from a "tip up" pose and could save a
+# sideways or reversed tip; from_profile ignores one this far off.
+DEFAULT_TIP_AXIS  = (0.0, 1.0, 0.0)
+TIP_TOLERANCE_DEG = 25.0
 
 DEFAULTS = dict(
     gain_deg   = 1.0,     # trail units per degree of tip travel
@@ -46,6 +52,14 @@ GYRO_CLIP = 32000 * 0.0010908308   # ~1830 deg/s; integration is wrong past this
 def _unit(v: np.ndarray) -> Optional[np.ndarray]:
     n = float(np.linalg.norm(v))
     return v / n if n > 1e-9 else None
+
+
+def tip_offset_deg(tip) -> float:
+    """Degrees between `tip` and DEFAULT_TIP_AXIS (90 if zero)."""
+    t = _unit(np.array(tip, dtype=float))
+    if t is None:
+        return 90.0
+    return float(np.degrees(np.arccos(np.clip(float(t @ np.array(DEFAULT_TIP_AXIS)), -1.0, 1.0))))
 
 
 class GyroBias:
@@ -96,6 +110,14 @@ class GestureTracker:
     def from_profile(cls, motion: Optional[dict], **params) -> "GestureTracker":
         """Build from a wand profile's "motion" block (or None for defaults)."""
         motion = motion or {}
+        tip = motion.get("tip_axis", DEFAULT_TIP_AXIS)
+        if tip_offset_deg(tip) > TIP_TOLERANCE_DEG:
+            # From an older calibration with the wand held wrong.  Its swipe
+            # checks were read with that tip too, so only the gyro bias is
+            # worth keeping.
+            log.warning("ignoring calibrated tip axis %s (%.0f deg off the wand's tip)",
+                        tip, tip_offset_deg(tip))
+            motion = {"gyro_bias": motion.get("gyro_bias", (0.0, 0.0, 0.0))}
         merged = dict(motion.get("params", {}))
         merged.update(params)
         return cls(tip_axis=motion.get("tip_axis", DEFAULT_TIP_AXIS),

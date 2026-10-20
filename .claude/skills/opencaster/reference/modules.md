@@ -43,7 +43,8 @@ text.  Frame builders: `frame(*cmds)`, `changeled(group, r, g, b, ms)`,
 Built-ins (`effects.BUILTIN` by name): `welcome(rgb)`, `success(rgb)`,
 `fail()`, `glow(r, g, b, fade_ms)` (stays on), `breathe(rgb, seconds,
 period)`, `clear()`, `countdown_tick(rgb)`, `go(rgb)`, `locked_in(rgb)`,
-`round_lost()`, `duel_won(rgb)`.  Direct: `light(rgb, fade_ms=300,
+`round_lost()`, `duel_won(rgb)`, `color_preview(rgb)`.  Non-success cues
+keep the tip dark (see the tip rule in the module docstring).  Direct: `light(rgb, fade_ms=300,
 hold_ms=0, groups=range(4))` (hold 0 = stays on), `vibrate(ms)`,
 `solid("#RRGGBB")`.  Macros (the original app's format):
 `macro_effect(macro, mtu, variables)`, `macro_to_frames(...)`,

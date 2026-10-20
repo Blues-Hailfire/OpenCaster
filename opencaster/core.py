@@ -322,7 +322,7 @@ class OpenCaster:
 
     def _show_color(self, address: str):
         if address in self.wands:
-            self.manager.play(effects.light(self.wand_rgb(address), 250, 1200), address)
+            self.manager.play(effects.color_preview(self.wand_rgb(address)), address)
 
     # direct control (API) ---------------------------------------------------------
 
