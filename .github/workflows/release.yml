@@ -1,0 +1,50 @@
+# Builds the Windows release (packaging/build.ps1) and attaches the zip to a
+# GitHub release.  Push a version tag to publish:
+#   git tag v1.0.0 && git push origin v1.0.0
+# "Run workflow" on the Actions tab builds a zip artifact without releasing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build
+        shell: pwsh
+        run: >
+          ./packaging/build.ps1 -Version "${{ github.ref_name }}"
+          -OutDir "${{ runner.temp }}/release" -VenvDir "${{ runner.temp }}/venv"
+          -Python (Get-Command python).Source
+
+      - name: Smoke test
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $exe = "${{ runner.temp }}/release/dist/OpenCaster/OpenCaster (debug).exe"
+          $p = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -PassThru -Wait -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "smoke test failed ($($p.ExitCode))" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenCaster-windows
+          path: ${{ runner.temp }}/release/OpenCaster-*-windows.zip
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ runner.temp }}/release/OpenCaster-*-windows.zip
+          generate_release_notes: true

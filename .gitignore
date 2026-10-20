@@ -7,3 +7,18 @@ media/sounds/
 media/videos/
 sounds/
 videos/
+
+# Per-user state
+progress.json
+settings.json
+wand_profiles.json
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+
+# Setup / builds
+.venv/
+build/
+dist/
