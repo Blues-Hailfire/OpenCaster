@@ -450,6 +450,45 @@ class MainWindow(QMainWindow):
         super().closeEvent(e)
 
 
+def smoke_test(app: QApplication) -> int:
+    """--smoke-test: check a build has what it needs – spells, assets, the
+    Bluetooth backend, Qt Multimedia – and that the window builds.  No
+    Bluetooth, no saved files (the core gets a temp folder); exit code 0 = ok."""
+    import tempfile
+    from PySide6.QtMultimedia import QMediaFormat
+    from .. import paths
+    problems = []
+    tmp = Path(tempfile.mkdtemp(prefix="opencaster_smoke_"))
+    core = OpenCaster(casts_file=tmp / "casts.jsonl", profiles_file=tmp / "profiles.json",
+                      progress_file=tmp / "progress.json", settings_file=tmp / "settings.json",
+                      use_api=False)
+    svgs = len(list(paths.SPELLS_DIR.glob("*.svg")))
+    print(f"spells: {len(core.library)} templates loaded of {svgs} in {paths.SPELLS_DIR}")
+    if not len(core.library) or len(core.library) != svgs:
+        problems.append("spell templates missing")
+    if not any(paths.ICONS_DIR.glob("*.png")):
+        problems.append("spell icons missing")
+    for name in ("opencaster-logo-1c.svg", "opencaster-icon-1c-dark.svg", "chevron.svg"):
+        if not (ASSETS / name).is_file():
+            problems.append(f"asset {name} missing")
+    if sys.platform == "win32":
+        try:
+            import bleak.backends.winrt.client  # noqa: F401
+            import bleak.backends.winrt.scanner  # noqa: F401
+        except Exception as e:
+            problems.append(f"Bluetooth backend: {e}")
+    decoders = QMediaFormat().supportedFileFormats(QMediaFormat.Decode)
+    print(f"multimedia: {len(decoders)} decodable formats")
+    if not decoders:
+        problems.append("Qt Multimedia has no backend (sounds/videos won't play)")
+    win = MainWindow(CoreBridge(core))
+    win.show()
+    app.processEvents()
+    print(f"data folder: {paths.ROOT}")
+    print("smoke test:", "; ".join(problems) if problems else "OK")
+    return 1 if problems else 0
+
+
 def main() -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     if sys.platform == "win32":     # own taskbar icon instead of python.exe's
@@ -461,6 +500,8 @@ def main() -> int:
     app.setApplicationName("OpenCaster")
     app.setFont(T.font(10))
     app.setStyleSheet(T.STYLESHEET)
+    if "--smoke-test" in sys.argv:
+        return smoke_test(app)
     bridge = CoreBridge(OpenCaster())
     win = MainWindow(bridge)
     win.show()

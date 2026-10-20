@@ -1,0 +1,47 @@
+Third-party components bundled with OpenCaster for Windows
+==========================================================
+
+OpenCaster.exe is built with PyInstaller and includes the components
+below, unmodified.  Each remains under its own licence.
+
+Qt for Python (PySide6, Shiboken6) and the Qt libraries
+    Licence: GNU Lesser General Public License v3 (LGPL-3.0)
+    https://www.qt.io/qt-for-python  -  source: https://code.qt.io/
+    Qt and PySide6 are dynamically linked: their DLLs and .pyd files are in
+    _internal\PySide6 and can be replaced with compatible builds.
+    Qt Multimedia's FFmpeg backend includes FFmpeg (LGPL-2.1 or later),
+    https://ffmpeg.org/
+
+Python
+    Licence: Python Software Foundation License
+    https://www.python.org/
+
+bleak (Bluetooth LE)
+    Licence: MIT  -  https://github.com/hbldh/bleak
+
+PyWinRT (winrt-runtime and winrt-windows-* projections)
+    Licence: MIT  -  https://github.com/pywinrt/pywinrt
+
+NumPy
+    Licence: BSD-3-Clause (bundled libraries: see numpy's LICENSE.txt)
+    https://numpy.org/
+
+SciPy
+    Licence: BSD-3-Clause (bundled libraries: see scipy's LICENSE.txt)
+    https://scipy.org/
+
+typing_extensions
+    Licence: Python Software Foundation License
+    https://github.com/python/typing_extensions
+
+PyInstaller bootloader
+    Licence: GPL-2.0 with the PyInstaller bootloader exception, which
+    allows distributing it with programs under any licence.
+    https://pyinstaller.org/
+
+Spell gesture icons (spells\icons)
+    By eigger, from eigger/hass-magic-caster-wand.  Licence: MIT (see
+    _internal\spells\icons\LICENSE).
+
+Full licence texts are included in the packages' metadata under
+_internal\ (the *.dist-info folders) where the projects ship them.

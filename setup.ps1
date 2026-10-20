@@ -20,7 +20,9 @@ param(
     [switch]$Yes                    # answer yes to every question
 )
 
-$ErrorActionPreference = "Stop"
+# Native tools (pip, winget) log to stderr; Windows PowerShell 5.1 turns
+# redirected stderr into errors, so exit codes are checked instead.
+$ErrorActionPreference = "Continue"
 $Repo = $PSScriptRoot
 $MinVersion = [version]"3.11"
 
@@ -124,12 +126,12 @@ if (Test-Path $VenvPy) {
     $existing = Test-Python $VenvPy
     if (-not $existing) {
         Say "The existing environment is broken or too old; rebuilding it." "Yellow"
-        Remove-Item -Recurse -Force $VenvDir
+        Remove-Item -Recurse -Force $VenvDir -ErrorAction Stop
     }
 }
 if (-not (Test-Path $VenvPy)) {
     Say "Creating $VenvDir"
-    New-Item -ItemType Directory -Force (Split-Path $VenvDir) | Out-Null
+    New-Item -ItemType Directory -Force (Split-Path $VenvDir) -ErrorAction Stop | Out-Null
     & $python.Path -m venv $VenvDir
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $VenvPy)) { Fail "couldn't create the environment in $VenvDir." }
 } else {
@@ -176,7 +178,7 @@ if (-not $NoShortcuts) {
         $folders = @([Environment]::GetFolderPath("Desktop"), [Environment]::GetFolderPath("Programs"))
     }
     foreach ($folder in $folders) {
-        New-Item -ItemType Directory -Force $folder | Out-Null
+        New-Item -ItemType Directory -Force $folder -ErrorAction Stop | Out-Null
         New-Shortcut (Join-Path $folder "OpenCaster.lnk") $VenvPyw "`"$Gui`"" "Cast spells with your Magic Caster wand"
         Say "  $folder\OpenCaster.lnk"
     }
