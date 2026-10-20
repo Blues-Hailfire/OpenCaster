@@ -50,8 +50,9 @@ programs can drive the wands through a local API.
   which recovered and preserved the original Magic Caster app's spell
   definitions (`spellbook.json`: wand and box lighting/haptic effects) and its
   `zz_spell_assets` media pack (casting sounds, spell videos), which OpenCaster
-  plays when you cast.  These files belong to their original owners and are
-  **not committed** to this repository; they live in the gitignored `media/`
+  plays when you cast.  These files belong to their original owners.  The
+  spell manifest, `media/spellbook.json`, is included in this repository;
+  the media pack is **not committed** and stays in your local `media/`
   folder.
 - **Spell gesture SVGs:** 45 of the templates in `spells/` were traced from the
   gesture diagrams by **eigger** in
@@ -108,10 +109,10 @@ pip install -r requirements.txt
 python OpenCaster_GUI.py
 ```
 
-1. **Effects (optional):** put `spellbook.json` and the media pack's files in
-   `media/` (sounds in `media/sounds/`, videos anywhere under `media/`).
-   Without them casting still works: the wand plays a generic pulse in its
-   colour on success and the spellbook shows shapes only.
+1. **Effects:** `media/spellbook.json` (included) gives every spell its own
+   wand light and haptics.  For sounds and videos, add the media pack's
+   files to `media/` (sounds in `media/sounds/`, videos anywhere under
+   `media/`); without them the spellbook shows shapes only.
 2. **Launch:** the app scans for wands and boxes and connects automatically.
 3. **Calibrate (optional):** press **Calibrate** once per wand to measure its gyro bias.
 4. **Cast:** hold all four touch pads, draw the spell, release.
@@ -528,8 +529,10 @@ matcher and prints a `PER_SPELL_THRESHOLDS` block to paste into
 
 ## Spell effects and media
 
-`opencaster/spellbook.py` reads the original app's data from `media/`, which
-is gitignored.  Everything is optional; missing files are simply skipped.
+`opencaster/spellbook.py` reads the original app's data from `media/`.
+`spellbook.json` and OpenCaster's logo (`media/Logo/`) are tracked; the rest
+of `media/` is gitignored.  Everything is optional; missing files are simply
+skipped.
 
 | Media | Source | Used for |
 |-------|--------|----------|
@@ -761,7 +764,7 @@ Measured on hardware:
 | `spells/icons/` | Original gesture PNGs by eigger (MIT), shown on spell cards |
 | `casts/casts.jsonl` | Labelled casts |
 | `wand_profiles.json` | Per-wand calibration, colour, nickname and auto-connect |
-| `media/` | Spellbook and media pack (gitignored, supply your own) |
+| `media/` | `spellbook.json` (the spell manifest) and `Logo/` are tracked; the media pack (sounds, videos) is gitignored – supply your own |
 | `Bluetooth Capture/` | Original btsnoop capture of the official app |
 
 ---
@@ -798,9 +801,9 @@ touching Bluetooth.
 
 Pushing a version tag (`git tag v1.0.0 && git push origin v1.0.0`) runs
 the same build on GitHub Actions (`.github/workflows/release.yml`), smoke
-tests it, and attaches the zip to a GitHub release.  The build never
-includes `media/`; in the release, user files (casts, profiles, progress,
-settings, `media/`) live next to the exe.
+tests it, and attaches the zip to a GitHub release.  The release ships
+`media/spellbook.json` next to the exe but never the media pack; user files
+(casts, profiles, progress, settings, `media/`) live next to the exe.
 
 ---
 

@@ -5,8 +5,10 @@
 #   dist\OpenCaster\OpenCaster.exe             the app (no console)
 #   dist\OpenCaster\OpenCaster (debug).exe     the same app with a console, for error messages
 #   dist\OpenCaster\_internal\                 Python, Qt, spells, assets
-# media\ is never bundled (not redistributable): users put their own next
-# to the exe, where OpenCaster also keeps casts, profiles and settings.
+# build.ps1 adds media\spellbook.json (the spell manifest: each spell's wand
+# light and haptics); the media pack (sounds, videos) is never bundled - users
+# add it to that media\ folder, next to which OpenCaster keeps casts,
+# profiles and settings.
 
 from pathlib import Path
 

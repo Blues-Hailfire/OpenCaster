@@ -1,10 +1,11 @@
-# Original Magic Caster spell data and audio/visual media, from
-# uuyyyuu/magic-caster-spellbook.  Not redistributable: keep local.
-#   media/          spellbook.json, *_video_payoff.mp4, patronus/mishap videos
+# Original Magic Caster audio/visual media, from uuyyyuu/magic-caster-spellbook:
+# keep local.  Tracked exceptions: the spell manifest (spellbook.json) and
+# OpenCaster's own logo (media/Logo/).
+#   media/          *_video_payoff.mp4, patronus/mishap videos
 #   media/sounds/   sfx_<spell>_cast_01..05.mp3
-media/
-media/sounds/
-media/videos/
+media/*
+!media/spellbook.json
+!media/Logo/
 sounds/
 videos/
 

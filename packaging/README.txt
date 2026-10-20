@@ -6,7 +6,9 @@ Source, documentation and updates: https://github.com/Blues-Hailfire/OpenCaster
 
 Start
 -----
-1. Unzip this folder anywhere you can write to (Desktop, Documents, ...).
+1. Unzip this folder anywhere you can write to (Desktop, Downloads, ...).
+   Avoid very deeply nested folders: Windows can't load some of the
+   Bluetooth files if the folder path is longer than about 160 characters.
 2. Turn on Bluetooth.
 3. Double-click OpenCaster.exe.  Your wand connects automatically.
 4. Cast: hold all four touch pads, draw the spell, release.
@@ -17,11 +19,11 @@ isn't code-signed: click "More info", then "Run anyway".
 If it doesn't start, run "OpenCaster (debug).exe": it opens a console
 window that shows the error.  Please include that text in a bug report.
 
-Spell effects (optional)
-------------------------
-Put spellbook.json and the media pack (sounds, videos) in a folder named
-"media" next to OpenCaster.exe for each spell's own light, sounds and
-videos.  Casting works without them.
+Spell effects
+-------------
+media\spellbook.json (included) gives every spell its own wand light and
+haptics.  For sounds and videos, add the media pack's files to that same
+"media" folder (sounds in media\sounds).  Casting works without them.
 
 Your files
 ----------

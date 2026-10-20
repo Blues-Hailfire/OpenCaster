@@ -50,6 +50,13 @@ if ($LASTEXITCODE -ne 0) { Fail "PyInstaller failed" }
 
 $App = Join-Path $Dist "OpenCaster"
 Copy-Item (Join-Path $PSScriptRoot "README.txt"), (Join-Path $PSScriptRoot "THIRD_PARTY_NOTICES.txt") $App -Force -ErrorAction Stop
+# The spell manifest gives each spell its own wand light and haptics; the
+# media pack (sounds, videos) is never shipped - users add it to media\.
+$Manifest = Join-Path $Repo "media\spellbook.json"
+if (Test-Path $Manifest) {
+    New-Item -ItemType Directory -Force (Join-Path $App "media") -ErrorAction Stop | Out-Null
+    Copy-Item $Manifest (Join-Path $App "media") -Force -ErrorAction Stop
+}
 $Zip = Join-Path $OutDir "OpenCaster-$Version-windows.zip"
 if (Test-Path $Zip) { Remove-Item $Zip -Force }
 Compress-Archive -Path $App -DestinationPath $Zip -ErrorAction Stop
