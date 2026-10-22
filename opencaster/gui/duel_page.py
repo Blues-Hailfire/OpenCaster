@@ -4,12 +4,15 @@ Duel page: set up a wizard's duel between two wands and watch it play out.
 Three modes (the rules live in opencaster.duel, run by the core):
   Quick-draw      two wizards get the same spell; the first to cast it wins
                   the round.  Best of five.
-  Clash           two wizards, three seconds to cast any battle spell; picks
+  Clash           two wizards, a few seconds to cast any battle spell; picks
                   stay hidden until both are in, then the elements decide
                   (opencaster.elements).  Best of five.
   Duelling Club   two to five wizards, turn by turn (in seat order or at
                   random): answer each spell with one that beats it, or block
                   it and attack.  One rally, until somebody slips up.
+
+Each mode remembers its own time to cast ("Seconds to cast" on the setup
+page; opencaster.duel has the defaults).
 
 Any seat may be the NPC, a computer opponent (opencaster.npc) at one of
 three skill levels; with one wand connected, Wizard 2 is the NPC.
@@ -24,11 +27,11 @@ import time
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QPushButton, QScrollArea, QStackedLayout, QStackedWidget,
+                               QPushButton, QScrollArea, QSpinBox, QStackedLayout, QStackedWidget,
                                QVBoxLayout, QWidget)
 
 from .. import elements as E
-from ..duel import CLUB_MAX_PLAYERS
+from ..duel import CAST_S_RANGE, CLUB_MAX_PLAYERS, ClashDuel, ClubDuel, Duel
 from ..npc import COLOR as NPC_COLOR, LEVELS as NPC_LEVELS, NPC
 from . import elements as GE
 from . import theme as T
@@ -44,25 +47,34 @@ NPC_TIPS = {"easy": "Slow; fumbles one gesture in four; answers right about two 
 POOL_NAMES = {"cast": "Spells you've cast", "all": "All spells", "Beginner": "Beginner spells",
               "Intermediate": "Intermediate spells", "Expert": "Expert spells"}
 
-MODES = {
+MODES = {        # rules text: {secs} is the mode's time to cast
     "race": ("Quick-draw",
              "Each round you're both shown the same spell: the first to cast it wins the round.  "
-             "Best of five.  Wait for “Cast!” – a gesture started during the countdown doesn't "
-             "count."),
+             "Best of five.  If nobody casts it within {secs}, the round is void.  Wait for "
+             "“Cast!” – a gesture started during the countdown doesn't count."),
     "clash": ("Clash",
-              "After “Cast!” you each have three seconds to cast any battle spell.  Spells stay "
+              "After “Cast!” you each have {secs} to cast any battle spell.  Spells stay "
               "hidden until both are in, then the elements decide: each beats two others, and a "
               "shield blocks anything.  An attack beats no spell at all; a draw scores nothing.  "
               "Best of five."),
     "club": ("Duelling Club",
              "Two to five wizards take turns, in seat order or at random.  Wizard 1 opens with "
-             "an attack (three seconds); the next wizard has five seconds to answer with a spell "
-             "that beats it – which the wizard after them must answer – or to block it with a "
-             "shield and attack within three seconds.  There are no rounds: the rally goes on "
+             "an attack; the next wizard answers with a spell that beats it – which the wizard "
+             "after them must answer – or blocks it with a shield and then attacks.  Every "
+             "attack and answer must be cast within {secs}.  There are no rounds: the rally goes on "
              "until someone answers too late or with a spell that doesn't beat the attack, and "
              "the wizard whose spell went unanswered wins."),
 }
 ORDERS = (("in_order", "In order"), ("random", "Random"))
+DEFAULT_CAST_S = {"race": Duel.default_cast_s, "clash": ClashDuel.default_cast_s,
+                  "club": ClubDuel.default_cast_s}
+CAST_TIPS = {"race": "How long both wizards have to cast the round's spell before the round is void",
+             "clash": "How long each wizard has after “Cast!” to cast a battle spell",
+             "club": "How long each wizard has to attack, or to answer an attack"}
+
+
+def seconds(n: float) -> str:
+    return f"{n:g} second" + ("" if n == 1 else "s")
 
 
 class ArenaCenter(QWidget):
@@ -517,6 +529,18 @@ class DuelPage(QWidget):
             lambda _i, on: on and self.state.prefs.setValue("club_order", self.order))
         grid.addWidget(self.order_label, CLUB_MAX_PLAYERS + 1, 0)
         grid.addWidget(self.order_row, CLUB_MAX_PLAYERS + 1, 1, 1, 2)
+        cast_label = QLabel("Seconds to cast")
+        cast_label.setFont(T.font(12, serif=True))
+        self.cast_s = QSpinBox()                     # remembered per mode (_mode_changed)
+        self.cast_s.setRange(*CAST_S_RANGE)
+        self.cast_s.setSuffix(" s")
+        self.cast_s.setMinimumWidth(90)
+        self.cast_s.valueChanged.connect(self._cast_s_changed)
+        cast_row = QHBoxLayout()
+        cast_row.addWidget(self.cast_s)
+        cast_row.addStretch()
+        grid.addWidget(cast_label, CLUB_MAX_PLAYERS + 2, 0)
+        grid.addLayout(cast_row, CLUB_MAX_PLAYERS + 2, 1, 1, 2)
         self.npc_label = QLabel("NPC skill")
         self.npc_label.setFont(T.font(12, serif=True))
         self.npc_row = QWidget()
@@ -537,8 +561,8 @@ class DuelPage(QWidget):
         self.npc_group.button(NPC_LEVELS.index(saved) if saved in NPC_LEVELS else 1).setChecked(True)
         self.npc_group.idToggled.connect(
             lambda _i, on: on and self.state.prefs.setValue("npc_level", self.npc_level))
-        grid.addWidget(self.npc_label, CLUB_MAX_PLAYERS + 2, 0)
-        grid.addWidget(self.npc_row, CLUB_MAX_PLAYERS + 2, 1, 1, 2)
+        grid.addWidget(self.npc_label, CLUB_MAX_PLAYERS + 3, 0)
+        grid.addWidget(self.npc_row, CLUB_MAX_PLAYERS + 3, 1, 1, 2)
         self._npc_shown = False
         self.npc_label.hide()
         self.npc_row.hide()
@@ -584,7 +608,12 @@ class DuelPage(QWidget):
     def _mode_changed(self):
         mode = self.mode
         self.state.prefs.setValue("duel_mode", mode)
-        self.rules.setText(MODES[mode][1])
+        self.cast_s.blockSignals(True)
+        self.cast_s.setValue(self.state.prefs.value(f"duel_cast_s_{mode}", int(DEFAULT_CAST_S[mode]),
+                                                    type=int))
+        self.cast_s.blockSignals(False)
+        self.cast_s.setToolTip(CAST_TIPS[mode])
+        self._show_rules()
         elemental = mode in ("clash", "club")        # spell elements instead of a spell pool
         self.pool_label.setVisible(not elemental)
         self.pool.setVisible(not elemental)
@@ -599,6 +628,13 @@ class DuelPage(QWidget):
             self._validate()
         if hasattr(self, "_setup_inner"):
             QTimer.singleShot(0, self._fit_setup)
+
+    def _cast_s_changed(self, value: int):
+        self.state.prefs.setValue(f"duel_cast_s_{self.mode}", value)
+        self._show_rules()
+
+    def _show_rules(self):
+        self.rules.setText(MODES[self.mode][1].format(secs=seconds(self.cast_s.value())))
 
     def _refresh_pools(self):
         if not hasattr(self, "pool"):
@@ -686,7 +722,7 @@ class DuelPage(QWidget):
 
     def _begin(self):
         self.bridge.call("start_duel", self.seats(), self.pool.currentData() or "all", self.mode,
-                         self.order, self.npc_level)
+                         self.order, self.npc_level, self.cast_s.value())
 
     # ── arena ─────────────────────────────────────────────────────────────────
 
@@ -800,7 +836,7 @@ class DuelPage(QWidget):
         if self.snap:
             self.bridge.call("start_duel", self.snap["players"], self.pool.currentData() or "all",
                              self.snap.get("mode", "race"), self.snap.get("order", "in_order"),
-                             self.snap.get("npc_level") or self.npc_level)
+                             self.snap.get("npc_level") or self.npc_level, self.snap.get("cast_s"))
 
     # ── core events ───────────────────────────────────────────────────────────
 
@@ -887,7 +923,8 @@ class DuelPage(QWidget):
                                        "any battle spell – first one counts")
         elif phase == "racing":
             self.centre.set_big("Cast!", T.TEAL)
-            self.centre.set_banner("", T.TEXT, "first to cast it wins the round")
+            self.centre.set_banner("", T.TEXT, "first to cast it wins the round  ·  "
+                                   + seconds(snap.get("cast_s", 30)))
         elif phase == "result" and clash:
             self.centre.stop_ring()
             self.centre.set_big("")

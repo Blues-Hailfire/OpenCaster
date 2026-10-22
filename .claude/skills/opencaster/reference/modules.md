@@ -116,7 +116,7 @@ loop thread.**
 | `set_target(name)` | practise one spell (others are rejected) |
 | `set_free_cast(on)` | accept any spell, no labelling (what game pages use) |
 | `set_aim(address, on, spell=None)` | `"aim"` events while on; wand glows in `spell`'s colour after its payoff; ends at that wand's next cast |
-| `start_duel(players, pool, mode, order, npc_level)` | `mode`: "race", "clash", "club"; `players`: addresses and/or `"npc"` |
+| `start_duel(players, pool, mode, order, npc_level, cast_s=None)` | `mode`: "race", "clash", "club"; `players`: addresses and/or `"npc"`; `cast_s`: seconds to cast (None: the mode's default) |
 | `cancel_duel()`, `skip_round()` | |
 | `set_wand_color(a, "#RRGGBB"\|None)`, `set_nickname(a, s)`, `set_default_color`, `set_house`, `set_patronus` | settings (persisted) |
 | `wand_info(a)`, `wand_list()`, `wand_label(a)`, `wand_color(a)` | queries |
@@ -154,7 +154,8 @@ status | light COLOR [--hold MS] | vibrate MS | effect NAME | spell NAME | liste
   `element_of(spell)`, `beats(a, b)`, `clash(spell_a, spell_b) -> (winner 0/1/None, line)`,
   `battle_spells()`, `SPELLS`, `BEATS` (verbs), `NAMES`.
 - `opencaster.duel` – `Duel` (quick-draw), `ClashDuel`, `ClubDuel`; constructor
-  `(players, [spells,] on_change, schedule, clock, rng, intro_s)`; inputs
+  `(players, [spells,] on_change, schedule, clock, rng, intro_s, cast_s=None)` (club also `order`;
+  `cast_s` clamped to `CAST_S_RANGE`, default `cls.default_cast_s`); inputs
   `window_opened(p)`, `window_closed(p)`, `cast(p, accepted, spell)`; `snapshot()`.
 - `opencaster.npc` – `NPC = "npc"`, `Npc(level, known, rng)` → `Move(react, draw, spell, fumble)`
   via `.race(spell) .clash() .attack() .counter(incoming) .retry(move)`; `gesture(outline, rng)`.

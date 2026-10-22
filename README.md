@@ -235,6 +235,11 @@ to three round wins); the Duelling Club is one rally for two to five.  Each
 wand pulses in its colour through the 3-2-1 countdown and flashes on
 **Cast!**; a gesture started during the countdown never counts.
 
+**Seconds to cast** sets how long each wizard has to cast: in quick-draw
+before the round is void (30 s by default), in a clash after **Cast!** (3 s),
+and in the Duelling Club for every attack and answer (5 s).  Each mode
+remembers its own setting; headless, use `--cast-seconds`.
+
 ### The NPC opponent
 
 No one to duel?  Any seat can be the **NPC**, a computer opponent; with a
@@ -261,7 +266,8 @@ The original app's duelling mode: two wizards, one spell.
 - Each round both wizards are shown the same spell; the first to cast it
   wins the round.  The winner's wand plays the spell, the other fades red.
   A different spell doesn't count.
-- A round nobody wins in 30 s is void; **Skip spell** voids it by hand;
+- A round nobody wins within **Seconds to cast** (30 s by default) is void;
+  **Skip spell** voids it by hand;
   after 9 rounds the higher score wins.
 - **Spell pools:** *Spells you've cast* (the default: spells you've been
   recognised casting, so rounds don't stall on shapes that won't
@@ -270,8 +276,8 @@ The original app's duelling mode: two wizards, one spell.
 ### Clash
 
 Spells as rock-paper-scissors.  After **Cast!** each wizard has **3
-seconds** to cast any battle spell (a gesture started in time may finish up
-to 2 s late).  Your first recognised battle spell is your pick: your wand
+seconds** (by default; **Seconds to cast**) to cast any battle spell (a
+gesture started in time may finish up to 2 s late).  Your first recognised battle spell is your pick: your wand
 buzzes and glows dimly in your own colour, and your panel only says *Spell
 chosen*.  Picks stay hidden until both are in or time is up; then both cards
 are revealed, both wands play their spells, and the elements decide:
@@ -299,9 +305,10 @@ are revealed, both wands play their spells, and the elements decide:
 ### Duelling Club
 
 Two to five wizards, the same elements, turn by turn.  Wizard 1 opens with
-an attack (**3 seconds**).  The next wizard has **5 seconds** to answer
-with a spell that beats it – which the wizard after them must then answer –
-or to block it with a shield, and then has 3 seconds to attack.  **Who
+an attack.  The next wizard answers with a spell that beats it – which the
+wizard after them must then answer – or blocks it with a shield and then
+attacks.  Every attack and answer has **5 seconds** (by default; **Seconds
+to cast**).  **Who
 answers** sets who's next: *In order* goes round the seats (Wizard 1, 2,
 3 …, back to 1); *Random* picks anyone but the caster.
 

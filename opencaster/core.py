@@ -376,12 +376,15 @@ class OpenCaster:
         return {k: len(self.duel_pool(k)) for k in POOLS}
 
     def start_duel(self, players: list, pool: str = "cast", mode: str = "race",
-                   order: str = "in_order", npc_level: str = "medium"):
+                   order: str = "in_order", npc_level: str = "medium",
+                   cast_s: Optional[float] = None):
         """mode "race": quick-draw on spells from `pool`; "clash": any battle
         spell, elements decide; "club": Duelling Club turns on the same
         elements, 2-5 players in seat order, the next to answer chosen by
         `order` ("in_order" or "random").  Quick-draw and clash take two.
-        A player may be npc.NPC, the computer opponent, at `npc_level`."""
+        A player may be npc.NPC, the computer opponent, at `npc_level`.
+        `cast_s`: seconds each player has to cast (None: the mode's default;
+        see opencaster.duel)."""
         players = list(dict.fromkeys(a for a in players if a in self.wands or a == N.NPC))   # seat order
         most = CLUB_MAX_PLAYERS if mode == "club" else 2
         if not 2 <= len(players) <= most or players == [N.NPC]:
@@ -402,15 +405,17 @@ class OpenCaster:
                 if a in self.sessions:
                     self.sessions[a].allowed = BATTLE_KEYS
             if mode == "clash":
-                self.duel = ClashDuel(players, self._on_duel, self._loop.call_later, intro_s=intro_s)
+                self.duel = ClashDuel(players, self._on_duel, self._loop.call_later, intro_s=intro_s,
+                                      cast_s=cast_s)
             else:
                 self.duel = ClubDuel(players, self._on_duel, self._loop.call_later, intro_s=intro_s,
-                                     order=order if order in CLUB_ORDERS else "in_order")
+                                     order=order if order in CLUB_ORDERS else "in_order", cast_s=cast_s)
         else:
             spells = self.duel_pool(pool)
             if len(spells) < 3:
                 spells = self.duel_pool("all")
-            self.duel = Duel(players, spells, self._on_duel, self._loop.call_later, intro_s=intro_s)
+            self.duel = Duel(players, spells, self._on_duel, self._loop.call_later, intro_s=intro_s,
+                             cast_s=cast_s)
         self.duel.start()
 
     def cancel_duel(self):

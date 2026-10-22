@@ -8,6 +8,8 @@ Headless OpenCaster: connect, cast, see results in the terminal.
     python -m opencaster --club [N]      Duelling Club (turn by turn) once N wands (2-5) are ready
     python -m opencaster --npc [LEVEL]   duel the NPC (computer opponent) in the last seat – with
                                          --duel, --clash or --club, or a quick-draw on its own
+    python -m opencaster --cast-seconds S  seconds each player has to cast in a duel (default: the
+                                         mode's own – quick-draw 30, clash 3, Duelling Club 5)
     python -m opencaster --no-sound      skip casting sounds
 
 Every connected wand casts independently.  The control API runs here too
@@ -56,8 +58,8 @@ def main(argv=None):
                     help="duel when two wands are ready; POOL: cast (default), all, "
                          "Beginner, Intermediate, Expert")
     ap.add_argument("--clash", action="store_true",
-                    help="clash duel when two wands are ready: 3 s to cast any battle spell, "
-                         "elements decide the round")
+                    help="clash duel when two wands are ready: a few seconds to cast any battle "
+                         "spell, elements decide the round")
     ap.add_argument("--club", nargs="?", const=2, type=int, metavar="PLAYERS",
                     help="Duelling Club once PLAYERS wands (2-5, default 2) are ready: answer "
                          "each spell with one that beats it, or block and attack, until someone "
@@ -69,6 +71,9 @@ def main(argv=None):
     ap.add_argument("--random-order", action="store_true",
                     help="Duelling Club: the next to answer is anyone but the caster, at random "
                          "(default: the next wand in order)")
+    ap.add_argument("--cast-seconds", type=float, metavar="S",
+                    help="seconds each player has to cast in a duel: quick-draw (default 30), "
+                         "clash (3) or each Duelling Club attack and answer (5)")
     ap.add_argument("--no-sound", action="store_true")
     ap.add_argument("--no-boxes", action="store_true", help="don't connect Magic Caster boxes")
     ap.add_argument("--no-api", action="store_true", help="don't start the control API")
@@ -169,7 +174,8 @@ def main(argv=None):
                 and not (core.duel and core.duel.active):
             core.start_duel(sorted(core.ready)[:wands] + ([NPC] if args.npc else []), args.duel or "cast",
                             "clash" if args.clash else "club" if args.club else "race",
-                            "random" if args.random_order else "in_order", args.npc or "medium")
+                            "random" if args.random_order else "in_order", args.npc or "medium",
+                            args.cast_seconds)
 
     ev.on("cast", on_cast)
     ev.on("spell", on_spell)

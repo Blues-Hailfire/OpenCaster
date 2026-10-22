@@ -7,7 +7,7 @@ rounds: one rally that runs until somebody slips up.
 
   Duel       quick-draw: both players get the same spell each round;
              whoever casts it first wins the round.
-  ClashDuel  each player has CLASH_WINDOW_S to cast any battle spell; the
+  ClashDuel  each player has a few seconds to cast any battle spell; the
              spells' elements decide the round (see opencaster.elements).
   ClubDuel   Duelling Club: turn by turn, each spell must be answered with
              one that beats it, or blocked with a shield.
@@ -19,7 +19,7 @@ Quick-draw:
 
   - A cast counts only if its gesture window opened after "Cast!" (no
     drawing during the countdown).
-  - A round nobody wins within ROUND_TIMEOUT_S, or one that is skipped, is
+  - A round nobody wins within the time to cast, or one that is skipped, is
     void: no point, next spell.  At most MAX_ROUNDS rounds are played; after
     that the higher score wins (or it's a draw).
   - Spells are drawn at random from the pool without repeats until the pool
@@ -30,10 +30,10 @@ up.  A gesture started inside the window may finish up to CLASH_GRACE_S
 late.  Casting nothing loses to any attack; protection and same-element
 picks draw; draws score nothing, so a clash allows up to CLASH_MAX_ROUNDS.
 
-Duelling Club: the first seat has CLUB_ATTACK_S to cast an attack.  The
-next player has CLUB_COUNTER_S to answer with a spell that beats it – which
-the player after them must then answer – or with a shield, after which they
-have CLUB_ATTACK_S to attack.  "Next" is the next seat ("in_order") or
+Duelling Club: the first seat has the time to cast for an attack.  The
+next player has as long to answer with a spell that beats it – which the
+player after them must then answer – or with a shield, after which they
+attack, again with the same time.  "Next" is the next seat ("in_order") or
 anyone but the caster ("random").  The rally has no limit: the first player
 who doesn't answer in time, or answers with a spell that doesn't beat the
 attack (a shield is no attack), slips up and the duel ends.  It goes to the
@@ -41,6 +41,11 @@ player whose spell went unanswered (the latest move by anyone else); if the
 opening attack fails, the other player wins a two-player duel and a bigger
 one has no winner.  A gesture that isn't recognised may be cast again while
 time remains.  There's one "round"; after the result comes "finished".
+
+The time to cast is `cast_s` (seconds, CAST_S_RANGE): how long every player
+has after "Cast!" (quick-draw: to win the round; clash: to lock in a spell)
+or after their turn starts (Duelling Club: attack or answer alike).  Each
+mode has its own default.
 
 No clock or timers of its own: `schedule(delay, fn)` must return a handle
 with .cancel() (asyncio's loop.call_later fits) and `clock()` returns
@@ -57,28 +62,31 @@ WINS_NEEDED     = 3
 MAX_ROUNDS      = 9
 COUNTDOWN       = 3          # beats
 BEAT_S          = 1.0
-ROUND_TIMEOUT_S = 30.0
+ROUND_TIMEOUT_S = 30.0       # quick-draw: time to cast the round's spell (default)
 RESULT_S        = 7.5        # a burst, then a 5 s payoff video
 
-CLASH_WINDOW_S   = 3.0       # time to cast after "Cast!"
+CLASH_WINDOW_S   = 3.0       # time to cast after "Cast!" (default)
 CLASH_GRACE_S    = 2.0       # a gesture started in time may finish this much later
 CLASH_MAX_ROUNDS = 15
 
-CLUB_ATTACK_S  = 3.0         # opening the rally, or attacking after a block
-CLUB_COUNTER_S = 5.0         # answering an attack
+CLUB_CAST_S    = 5.0         # time to attack or answer an attack (default)
 CLUB_MAX_PLAYERS = 5
 CLUB_ORDERS = ("in_order", "random")
+
+CAST_S_RANGE = (1, 60)       # the time to cast a player may be given, in seconds
 
 
 class Duel:
     mode = "race"
+    default_cast_s = ROUND_TIMEOUT_S
     max_rounds = MAX_ROUNDS
     wins_needed = WINS_NEEDED
     min_players = max_players = 2
 
     def __init__(self, players: list, spells: list, on_change: Callable[[dict], None],
                  schedule: Callable, clock: Callable[[], float] = time.monotonic,
-                 rng: Optional[random.Random] = None, intro_s: float = 2.0):
+                 rng: Optional[random.Random] = None, intro_s: float = 2.0,
+                 cast_s: Optional[float] = None):
         if not self.min_players <= len(players) <= self.max_players or len(set(players)) != len(players):
             raise ValueError("a duel needs two different wands" if self.max_players == 2 else
                              f"a duel needs {self.min_players} to {self.max_players} different wands")
@@ -91,6 +99,7 @@ class Duel:
         self.clock = clock
         self.rng = rng or random.Random()
         self.intro_s = intro_s
+        self.cast_s = self.default_cast_s if cast_s is None else             min(max(float(cast_s), CAST_S_RANGE[0]), CAST_S_RANGE[1])
         self.phase = "idle"
         self.round = 0
         self.spell: Optional[str] = None
@@ -158,7 +167,8 @@ class Duel:
                 "count": self.count, "players": list(self.players),
                 "scores": dict(self.scores), "round_winner": self.round_winner,
                 "winner": self.winner, "message": self.message,
-                "wins_needed": self.wins_needed, "history": list(self.history)}
+                "wins_needed": self.wins_needed, "history": list(self.history),
+                "cast_s": self.cast_s}
 
     def _publish(self):
         self.on_change(self.snapshot())
@@ -208,7 +218,7 @@ class Duel:
         self._go_at = self.clock()
         self.message = "Cast!"
         self._publish()
-        self._after(ROUND_TIMEOUT_S, lambda: self._end_round(None, "Time's up"))
+        self._after(self.cast_s, lambda: self._end_round(None, "Time's up"))
 
     def _end_round(self, winner: Optional[str], message: str):
         self.round_winner = winner
@@ -236,16 +246,18 @@ class Duel:
 
 
 class ClashDuel(Duel):
-    """Each round both players cast any battle spell within CLASH_WINDOW_S of
+    """Each round both players cast any battle spell within cast_s of
     "Cast!"; elements decide who wins.  The phase during the window is still
     "racing"."""
     mode = "clash"
+    default_cast_s = CLASH_WINDOW_S
     max_rounds = CLASH_MAX_ROUNDS
 
     def __init__(self, players: list, on_change: Callable[[dict], None], schedule: Callable,
                  clock: Callable[[], float] = time.monotonic,
-                 rng: Optional[random.Random] = None, intro_s: float = 2.0):
-        super().__init__(players, battle_spells(), on_change, schedule, clock, rng, intro_s)
+                 rng: Optional[random.Random] = None, intro_s: float = 2.0,
+                 cast_s: Optional[float] = None):
+        super().__init__(players, battle_spells(), on_change, schedule, clock, rng, intro_s, cast_s)
         self.picks: dict = {}            # player → locked-in spell (hidden until the result)
         self.line = ""                   # "Aguamenti douses Incendio"
         self.overtime = False            # window over, waiting for a gesture in progress
@@ -304,7 +316,7 @@ class ClashDuel(Duel):
     def snapshot(self) -> dict:
         s = super().snapshot()
         shown = self.phase in ("result", "finished")
-        s.update(window_s=CLASH_WINDOW_S, overtime=self.overtime,
+        s.update(window_s=self.cast_s, overtime=self.overtime,
                  locked=[p for p in self.players if p in self.picks],
                  picks=dict(self.picks) if shown else {},
                  elements={p: element_of(sp) for p, sp in self.picks.items()} if shown else {},
@@ -319,10 +331,10 @@ class ClashDuel(Duel):
     def _go(self):
         self.phase = "racing"
         self._go_at = self.clock()
-        self._deadline = self._go_at + CLASH_WINDOW_S
+        self._deadline = self._go_at + self.cast_s
         self.message = "Cast!"
         self._publish()
-        self._after(CLASH_WINDOW_S, self._time_up)
+        self._after(self.cast_s, self._time_up)
 
     def _time_up(self):
         if not self.racing:
@@ -362,14 +374,15 @@ class ClubDuel(Duel):
     players in seat order, until somebody slips up.  The phase stays
     "racing" through the rally; every new turn bumps turn_no."""
     mode = "club"
+    default_cast_s = CLUB_CAST_S
     max_players = CLUB_MAX_PLAYERS
     wins_needed = 1
 
     def __init__(self, players: list, on_change: Callable[[dict], None], schedule: Callable,
                  clock: Callable[[], float] = time.monotonic,
                  rng: Optional[random.Random] = None, intro_s: float = 2.0,
-                 order: str = "in_order"):
-        super().__init__(players, battle_spells(), on_change, schedule, clock, rng, intro_s)
+                 order: str = "in_order", cast_s: Optional[float] = None):
+        super().__init__(players, battle_spells(), on_change, schedule, clock, rng, intro_s, cast_s)
         if order not in CLUB_ORDERS:
             raise ValueError(f"order must be one of {CLUB_ORDERS}")
         self.order = order
@@ -390,7 +403,7 @@ class ClubDuel(Duel):
 
     @property
     def window_s(self) -> float:
-        return CLUB_ATTACK_S if self.turn_kind == "attack" else CLUB_COUNTER_S
+        return self.cast_s               # the same for attacks and answers
 
     def _next(self, player: str) -> str:
         """Who answers `player`'s spell: the next seat, or anyone else at random."""
