@@ -54,12 +54,11 @@ programs can drive the wands through a local API.
   spell manifest, `media/spellbook.json`, is included in this repository;
   the media pack is **not committed** and stays in your local `media/`
   folder.
-- **Spell gesture SVGs:** 45 of the templates in `spells/` were traced from the
+- **Spell gesture SVGs:** all 52 templates in `spells/` were traced from the
   gesture diagrams by **eigger** in
   [eigger/hass-magic-caster-wand](https://github.com/eigger/hass-magic-caster-wand/tree/master/docs/gestures)
   (MIT licence); each traced SVG names its source image.  The spell icons in
-  `spells/icons/` are those original PNGs, unmodified (licence alongside).  Alohomora, Bombarda,
-  Expelliarmus, Incarcerous, Incendio, Lumos and Nox were drawn for OpenCaster.
+  `spells/icons/` are those original PNGs, unmodified (licence alongside).
 
 Magic Caster is a Warner Bros. product.  OpenCaster is an unofficial project
 and is not affiliated with or endorsed by Warner Bros.
