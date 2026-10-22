@@ -16,9 +16,9 @@ devices, but if you beat me to it, there's an [API](#control-api) – go wild!
 Some of the coolest features include the return of [duelling](#wizards-duel)!
 Duel your friends!  Or an NPC if you need people, I'm sorry.  There are
 three duel modes, with Duelling Club supporting up to 5 players.  (Yes, you
-can connect more than one wand.)  The Spellbook is back!  (Media coming
-soon – we have it, we just have to finalize it.)  I've also added a fun
-[environment mode](#environment-the-enchanted-jack-o-lantern): cast spells
+can connect more than one wand.)  The Spellbook is back, sounds and videos
+included – setup (or the app's first start) downloads the media pack.
+I've also added a fun [environment mode](#environment-the-enchanted-jack-o-lantern): cast spells
 and blow up some pumpkins!  I highly recommend giving Wingardium Leviosa a
 go.
 
@@ -52,8 +52,8 @@ programs can drive the wands through a local API.
   `zz_spell_assets` media pack (casting sounds, spell videos), which OpenCaster
   plays when you cast.  These files belong to their original owners.  The
   spell manifest, `media/spellbook.json`, is included in this repository;
-  the media pack is **not committed** and stays in your local `media/`
-  folder.
+  the media pack is **not committed**: setup or the app downloads it into
+  your local `media/` folder (see [Spell effects and media](#spell-effects-and-media)).
 - **Spell gesture SVGs:** all 52 templates in `spells/` were traced from the
   gesture diagrams by **eigger** in
   [eigger/hass-magic-caster-wand](https://github.com/eigger/hass-magic-caster-wand/tree/master/docs/gestures)
@@ -95,11 +95,13 @@ isn't code-signed).
 **Windows, from source:** double-click **`setup.bat`**.  It finds (or
 offers to install) Python, installs everything OpenCaster needs into
 `%LOCALAPPDATA%\OpenCaster`, and adds **OpenCaster** to your Desktop and
-Start Menu.  Run it again any time to update.  If the app doesn't start,
-use the **OpenCaster (troubleshoot)** shortcut to see the error.
+Start Menu.  It also offers to download the media pack (each spell's
+sounds and videos, about 530 MB).  Run it again any time to update.  If
+the app doesn't start, use the **OpenCaster (troubleshoot)** shortcut to see the error.
 
 **macOS / Linux:** `bash setup.sh` does the same and creates an
-`opencaster` launcher (plus an app-menu entry on Linux).
+`opencaster` launcher (plus an app-menu entry on Linux).  Skip the media
+download with `setup.ps1 -NoMedia` / `setup.sh --no-media`.
 
 **By hand:**
 
@@ -109,9 +111,10 @@ python OpenCaster_GUI.py
 ```
 
 1. **Effects:** `media/spellbook.json` (included) gives every spell its own
-   wand light and haptics.  For sounds and videos, add the media pack's
-   files to `media/` (sounds in `media/sounds/`, videos anywhere under
-   `media/`); without them the spellbook shows shapes only.
+   wand light and haptics.  Sounds and videos come in the media pack: setup
+   offers it, the app offers it on first start (and in Settings), or run
+   `python -m opencaster.media_pack`.  Without it the spellbook shows
+   shapes only.
 2. **Launch:** the app scans for wands and boxes and connects automatically.
 3. **Calibrate (optional):** press **Calibrate** once per wand to measure its gyro bias.
 4. **Cast:** hold all four touch pads, draw the spell, release.
@@ -558,6 +561,17 @@ on a 16-core CPU.
 of `media/` is gitignored.  Everything is optional; missing files are simply
 skipped.
 
+**The media pack** (`opencaster/media_pack.py`) downloads the preserved
+Magic Caster resource bundle (2026-10-11, 533 MB), checks every file against
+the bundle's SHA-256 sums (whose own hash is pinned in the code) and unpacks
+the sounds into `media/sounds/` and the videos into `media/`, keeping the
+tracked `spellbook.json`.  The download waits in the temp folder and resumes
+if interrupted; files already in place are skipped.  `setup.ps1` /
+`setup.sh` offer it, the GUI asks once on first start and keeps a button in
+Settings → Media, and `python -m opencaster.media_pack` does it by hand
+(`--check`, `--force`, `--dest DIR`).  Your own copy works too: put the files
+anywhere under `media/`.
+
 | Media | Source | Used for |
 |-------|--------|----------|
 | Wand lights + haptics | `config_wand.macros_payoff` in `media/spellbook.json` | A recognised spell's effect on the wand, encoded like the app's `MacroFactory` (see [Lights and haptics](#lights-and-haptics)) |
@@ -776,6 +790,7 @@ Measured on hardware:
 | `opencaster/casting/` | **Spell assessment** (numpy/scipy only): `tracker.py` gyro gesture tracker · `shapes.py` SVG templates · `matcher.py` DTW recogniser and thresholds · `session.py` casting state machine · `calibration.py` motion calibration logic · `castlog.py` labelled casts · `profiles.py` per-wand calibration · `__main__.py` evaluate / replay CLI |
 | `opencaster/recognition/` | **Recognition testing and training** (offline; never loaded by the app): `synth.py` synthetic casts and near-misses, per-spell threshold fitting · `gpu.py` bulk DTW scoring on the GPU (OpenCL, optional) · `__main__.py` synth CLI |
 | `opencaster/spellbook.py` | Original spell data, cast colours, sounds, videos; mastery progress |
+| `opencaster/media_pack.py` | Downloads, checks and unpacks the media pack into `media/` |
 | `opencaster/settings.py` | Default colour, house, Patronus, API settings (`settings.json`) |
 | `opencaster/duel.py` | Duel rules: quick-draw, clash and Duelling Club |
 | `opencaster/npc.py` | The NPC opponent: skill levels, what it casts and how long it takes (pure logic; the core plays it) |
@@ -789,7 +804,7 @@ Measured on hardware:
 | `spells/icons/` | Original gesture PNGs by eigger (MIT), shown on spell cards |
 | `casts/casts.jsonl` | Labelled casts |
 | `wand_profiles.json` | Per-wand calibration, colour, nickname and auto-connect |
-| `media/` | `spellbook.json` (the spell manifest) and `Logo/` are tracked; the media pack (sounds, videos) is gitignored – supply your own |
+| `media/` | `spellbook.json` (the spell manifest) and `Logo/` are tracked; the media pack (sounds, videos) is gitignored – downloaded by setup or the app |
 | `Bluetooth Capture/` | Original btsnoop capture of the official app |
 
 ---
@@ -831,7 +846,8 @@ touching Bluetooth.
 Pushing a version tag (`git tag v1.0.0 && git push origin v1.0.0`) runs
 the same build on GitHub Actions (`.github/workflows/release.yml`), smoke
 tests it, and attaches the zip to a GitHub release.  The release ships
-`media/spellbook.json` next to the exe but never the media pack; user files
+`media/spellbook.json` next to the exe but never the media pack (the app
+offers to download it on first start); user files
 (casts, profiles, progress, settings, `media/`) live next to the exe.
 
 ---

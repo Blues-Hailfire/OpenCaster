@@ -7,8 +7,11 @@
 #        Linux  ${XDG_DATA_HOME:-~/.local/share}/OpenCaster/venv
 #   3. Installs (or updates) the packages in requirements.txt.
 #   4. Adds an `opencaster` launcher (and an app-menu entry on Linux).
+#   5. Offers to download the media pack (each spell's sounds and videos) into
+#      media/, if it isn't there yet.
 #
-# Safe to run again.  Options: --venv DIR, --no-launcher
+# Safe to run again (an interrupted media download resumes).
+# Options: --venv DIR, --no-launcher, --no-media
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,10 +22,12 @@ else
 fi
 VENV="$BASE/venv"
 LAUNCHER=1
+MEDIA=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --venv) VENV="$2"; shift 2 ;;
         --no-launcher) LAUNCHER=0; shift ;;
+        --no-media) MEDIA=0; shift ;;
         *) echo "unknown option: $1"; exit 2 ;;
     esac
 done
@@ -30,6 +35,12 @@ done
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 fail() { printf '\nSetup stopped: %s\n' "$*" >&2; exit 1; }
+ask()  {   # yes unless answered no; no terminal to ask: no
+    local answer
+    [[ -t 0 ]] || return 1
+    read -r -p "$* [Y/n] " answer || return 1
+    [[ -z "$answer" || "$answer" =~ ^[Yy] ]]
+}
 
 step "Looking for Python 3.11 or newer"
 PY=""
@@ -93,10 +104,19 @@ EOF
     fi
 fi
 
-if [[ ! -f "$REPO/media/spellbook.json" ]]; then
-    say ""
-    say "Optional: put spellbook.json and the media pack in $REPO/media for each spell's"
-    say "own light, sounds and videos (casting works without them)."
+if [[ $MEDIA -eq 1 ]]; then
+    step "Media pack (each spell's sounds and videos)"
+    # from the repository, so -m finds the opencaster package
+    if ! (cd "$REPO" && "$VENV/bin/python" -m opencaster.media_pack --check); then
+        if ask "Download the media pack now (about 530 MB)?"; then
+            (cd "$REPO" && "$VENV/bin/python" -m opencaster.media_pack) || {
+                say "The media pack isn't installed yet - run setup again to resume, or use"
+                say "Settings in OpenCaster.  Casting works without it."
+            }
+        else
+            say "Skipped - OpenCaster offers it on first start (and in Settings)."
+        fi
+    fi
 fi
 say ""
 say "Setup complete. Start OpenCaster with:"

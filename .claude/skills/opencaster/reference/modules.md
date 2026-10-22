@@ -3,8 +3,8 @@
 The repo root holds `opencaster/` (the package), `spells/` (52 SVG gesture
 templates), `casts/casts.jsonl` (labelled casts), `tools/` (spell authoring),
 `OpenCaster_GUI.py`.  `media/` is optional local data from the original app
-(spellbook.json, sounds, videos) – **gitignored, not redistributable**; code
-must work without it.  Requirements: Python 3.11+, `bleak`, `numpy`, `scipy`,
+(spellbook.json, sounds, videos) – **gitignored, not redistributable**
+(`opencaster.media_pack` downloads it); code must work without it.  Requirements: Python 3.11+, `bleak`, `numpy`, `scipy`,
 `PySide6` (GUI only).  `opencaster.paths` anchors every data file to the repo
 root (`ROOT`, `SPELLS_DIR`, `MEDIA_DIR`, `CASTS_FILE`, `PROFILES_FILE`,
 `PROGRESS_FILE`, `SETTINGS_FILE`).
@@ -164,6 +164,9 @@ status | light COLOR [--hold MS] | vibrate MS | effect NAME | spell NAME | liste
 - `opencaster.spellbook` – `Spellbook(media_dir)`: `.get(name) -> SpellInfo`
   (`colors`, `wand_macro()`, `sound()`, `video`, `pronunciation`, `difficulty`…);
   `Progress(path)`: `.count(name)`, `.record(name)`.  Without `media/` these are empty.
+- `opencaster.media_pack` – `installed(media_dir)`, `install(dest, url, progress, cancelled)`
+  (download with resume, SHA-256 checks, unpack; raises `Cancelled`, `ChecksumError`, `OSError`);
+  `python -m opencaster.media_pack [--check] [--force] [--dest DIR]`.
 - `opencaster.settings` – `Settings(path)`, `HOUSES`, `rgb("#RRGGBB")`, `normalise_color`.
 
 ## opencaster.gui – PySide6

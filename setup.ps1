@@ -7,15 +7,19 @@ OpenCaster setup for Windows.  Double-click setup.bat (it runs this).
   3. Installs (or updates) the packages in requirements.txt.
   4. Adds "OpenCaster" shortcuts to the Desktop and Start Menu, plus an
      "OpenCaster (troubleshoot)" one that keeps a console open for errors.
+  5. Offers to download the media pack (each spell's sounds and videos) into
+     media\, if it isn't there yet.
 
-Safe to run again: it updates the packages and remakes the shortcuts.
+Safe to run again: it updates the packages and remakes the shortcuts; an
+interrupted media download resumes.
 
-  setup.ps1 [-VenvDir DIR] [-ShortcutDir DIR] [-NoShortcuts] [-NoLaunch] [-Yes]
+  setup.ps1 [-VenvDir DIR] [-ShortcutDir DIR] [-NoShortcuts] [-NoMedia] [-NoLaunch] [-Yes]
 #>
 param(
     [string]$VenvDir = (Join-Path $env:LOCALAPPDATA "OpenCaster\venv"),
     [string]$ShortcutDir = "",      # put both shortcuts here instead of Desktop + Start Menu
     [switch]$NoShortcuts,
+    [switch]$NoMedia,               # don't offer the media pack download
     [switch]$NoLaunch,
     [switch]$Yes                    # answer yes to every question
 )
@@ -188,6 +192,26 @@ if (-not $NoShortcuts) {
     Say "  $trouble\OpenCaster (troubleshoot).lnk"
 }
 
+# -- 5. Media pack --------------------------------------------------------------
+
+if (-not $NoMedia) {
+    Step "Media pack (each spell's sounds and videos)"
+    Push-Location $Repo                 # so -m finds the opencaster package
+    & $VenvPy -m opencaster.media_pack --check
+    if ($LASTEXITCODE -ne 0) {
+        if (Ask "Download the media pack now (about 530 MB)?") {
+            & $VenvPy -m opencaster.media_pack
+            if ($LASTEXITCODE -ne 0) {
+                Say "The media pack isn't installed yet - run setup again to resume, or use" "Yellow"
+                Say "Settings in OpenCaster.  Casting works without it." "Yellow"
+            }
+        } else {
+            Say "Skipped - OpenCaster offers it on first start (and in Settings)." "Yellow"
+        }
+    }
+    Pop-Location
+}
+
 # -- Done -----------------------------------------------------------------------
 
 Step "Checks"
@@ -196,10 +220,6 @@ if (-not $bt) {
     Say "No working Bluetooth adapter found. The wand needs Bluetooth LE - turn it on in Settings." "Yellow"
 } else {
     Say "Bluetooth adapter found." "Green"
-}
-if (-not (Test-Path (Join-Path $Repo "media\spellbook.json"))) {
-    Say "Optional: put spellbook.json and the media pack in $Repo\media for each spell's own" "Yellow"
-    Say "light, sounds and videos (casting works without them)." "Yellow"
 }
 
 Write-Host ""

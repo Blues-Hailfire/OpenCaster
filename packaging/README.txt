@@ -22,8 +22,9 @@ window that shows the error.  Please include that text in a bug report.
 Spell effects
 -------------
 media\spellbook.json (included) gives every spell its own wand light and
-haptics.  For sounds and videos, add the media pack's files to that same
-"media" folder (sounds in media\sounds).  Casting works without them.
+haptics.  Sounds and videos come in the media pack: on first start
+OpenCaster offers to download it (about 530 MB) into the "media" folder,
+and Settings has a button for it later.  Casting works without it.
 
 Your files
 ----------

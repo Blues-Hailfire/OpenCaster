@@ -5,7 +5,9 @@ from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QVBoxLayout)
 
+from .. import media_pack
 from ..settings import HOUSES
+from . import media_download
 from . import theme as T
 from .media import VideoPanel
 from .widgets import ColorSwatch, section
@@ -104,6 +106,11 @@ class SettingsDialog(QDialog):
             box.setChecked(state.flag(key, default))
             box.toggled.connect(lambda on, k=key: state.set_flag(k, on))
             lay.addWidget(box)
+        if media_download.missing(state):
+            get = QPushButton(f"Download the media pack ({media_pack.SIZE / 1e6:.0f} MB)…")
+            get.setToolTip("Each spell's casting sounds and video, plus Patronus and mishap videos")
+            get.clicked.connect(self._download_media)
+            lay.addWidget(get, 0, Qt.AlignLeft)
 
         lay.addWidget(section("Control API"))
         api = cfg.get("api", {})
@@ -139,6 +146,10 @@ class SettingsDialog(QDialog):
         if path:
             self.video.show()
             self.video.play(path)
+
+    def _download_media(self):
+        self.accept()
+        media_download.download(self.parentWidget(), self.state)
 
     def done(self, r):
         self.video.stop()

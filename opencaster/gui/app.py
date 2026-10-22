@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QHBoxLayou
 from ..core import OpenCaster
 from ..npc import NPC
 from ..wand import protocol
+from . import media_download
 from . import theme as T
 from .bridge import CoreBridge
 from .calibration import CalibrationDialog
@@ -211,6 +212,7 @@ class MainWindow(QMainWindow):
 
     def started(self):
         self.cast_page.start()
+        QTimer.singleShot(0, lambda: media_download.offer_on_start(self, self.state))
 
     def practise(self, name: str):
         self.cast_page.practise(name)
