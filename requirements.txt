@@ -5,3 +5,5 @@ numpy>=1.24
 scipy>=1.10
 # GUI (OpenCaster_GUI.py): Qt widgets, multimedia (sounds/videos)
 PySide6>=6.6
+# opencaster.recognition (offline testing/training): GPU scoring is optional
+# pyopencl

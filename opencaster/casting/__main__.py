@@ -4,12 +4,17 @@ Headless spell assessment.
     python -m opencaster.casting list                       spell templates
     python -m opencaster.casting evaluate [--misses]        score the matcher on labelled casts
     python -m opencaster.casting evaluate --threshold 0.3 --margin 1.2
+    python -m opencaster.casting evaluate --retrack         re-run the current tracker on each
+                                                            cast's raw motion first
     python -m opencaster.casting replay capture.csv         run a recorded IMU capture through
                                                             the casting session
 
 evaluate re-runs every cast in casts/casts.jsonl and prints accuracy, a
 confusion table, per-spell score distributions and suggested
 PER_SPELL_THRESHOLDS for matcher.py.
+
+Synthetic casts, bulk (GPU) scoring and threshold fitting live in
+opencaster.recognition: python -m opencaster.recognition --help
 
 replay takes a CSV from `python -m opencaster.wand record` (t, buttons,
 ax..gz); casts open and close exactly as they would live.
@@ -23,7 +28,7 @@ from collections import Counter, defaultdict
 import numpy as np
 
 from ..paths import CASTS_FILE, PROFILES_FILE, SPELLS_DIR
-from .castlog import NOT_A_SPELL, CastLog
+from .castlog import NOT_A_SPELL, CastLog, retrack
 from .matcher import DEFAULT_THRESHOLD, MARGIN_RATIO, SpellMatcher
 from .profiles import WandProfiles
 from .session import CastSession, assess
@@ -44,6 +49,15 @@ def cmd_evaluate(args):
     if not casts:
         print(f"No labelled casts in {args.file} - cast with 'Label casts' on in the GUI.")
         return
+    if args.retrack:
+        redone = [dict(c, trail=t.tolist()) for c in casts
+                  if (t := retrack(c, from_preroll=args.retrack == "preroll")) is not None]
+        print(f"re-tracked {len(redone)} casts with the current tracker"
+              + (" (bias and world-up from the pre-roll)" if args.retrack == "preroll" else "")
+              + f"; {len(casts) - len(redone)} recorded without raw motion skipped")
+        casts = redone
+        if not casts:
+            return
     lib = SpellLibrary(args.spells)
     matcher = SpellMatcher(threshold=args.threshold, margin_ratio=args.margin)
     names = {t.key: t.name for t in lib.templates}
@@ -171,6 +185,9 @@ def main(argv=None):
     e.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     e.add_argument("--margin", type=float, default=MARGIN_RATIO)
     e.add_argument("--misses", action="store_true", help="list every wrong cast")
+    e.add_argument("--retrack", nargs="?", const="exact", choices=("exact", "preroll"),
+                   help="rebuild trails from raw motion with the current tracker (exact: from the "
+                        "tracker state at window open; preroll: re-estimate it from the pre-roll)")
     r = sub.add_parser("replay", help="replay a recorded IMU capture")
     r.add_argument("file")
     r.add_argument("--wand", help="use this wand's motion calibration (MAC address)")

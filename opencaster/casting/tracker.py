@@ -139,6 +139,17 @@ class GestureTracker:
         return np.column_stack([self.trail_x, self.trail_y]) if self.trail_x \
             else np.zeros((0, 2))
 
+    def state(self) -> dict:
+        """What a gesture depends on besides its own samples: gyro bias and
+        world-up when it begins (the bias estimator doesn't run during a
+        gesture).  restore(), begin() and the same samples give the same trail."""
+        return {"gyro_bias": [float(v) for v in self.bias.bias],
+                "up": None if self._up is None else [float(v) for v in self._up]}
+
+    def restore(self, state: dict):
+        self.bias.bias = np.array(state["gyro_bias"], dtype=float)
+        self._up = None if state.get("up") is None else np.array(state["up"], dtype=float)
+
     def position(self) -> tuple:
         """Where the tip points now, relative to begin(): (right, up) in trail units."""
         return self._x, self._y

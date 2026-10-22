@@ -88,7 +88,11 @@ from opencaster.casting import (SpellLibrary, SpellMatcher, CastSession, CastRes
   offline: samples → (trail, stats).
 - `WandProfiles(path)` – per-wand JSON: `motion(address)`, `get/set(address, key)`, `auto_connect()`.
 
-CLI: `python -m opencaster.casting list | evaluate [--misses] | replay capture.csv`.
+CLI: `python -m opencaster.casting list | evaluate [--misses] [--retrack [preroll]] | replay capture.csv`.
+
+Labelled casts carry raw motion (`imu`: 1 s pre-roll + gesture, int16 wand counts, base64), the profile `motion` block and the tracker `state()` at window open; `castlog.retrack(record)` rebuilds the trail with the current tracker (`decode_imu(record)` gives the samples).
+
+Offline tuning lives in `opencaster.recognition` (never imported by the app): `python -m opencaster.recognition synth [--per 500] [--save f.npz | --load f.npz] [--fa-weight w]` scores synthetic casts and near-misses (GPU via pyopencl if present) and prints suggested `PER_SPELL_THRESHOLDS`.
 
 ## opencaster.core – everything wired together
 

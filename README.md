@@ -524,6 +524,24 @@ It re-runs every labelled cast in `casts/casts.jsonl` through the current
 matcher and prints a `PER_SPELL_THRESHOLDS` block to paste into
 `opencaster/casting/matcher.py`.
 
+Labelled casts are few per spell, so `opencaster.recognition` also tests
+against synthetic ones: casts generated from the templates with a hand's
+tilt, stretch, wobble and rounded corners, plus near-misses that must be
+rejected (half a spell, a spell drawn backwards, two spells blended, random
+scribbles).  It fits a threshold per spell and shows the trade-off at several
+false-accept weights, on held-out synthetic casts and on your real ones:
+
+```bash
+python -m opencaster.recognition synth --per 500 --save synth.npz   # generate, score, fit
+python -m opencaster.recognition synth --load synth.npz --fa-weight 2
+```
+
+Scoring runs on the GPU through OpenCL when `pyopencl` is installed
+(`pip install pyopencl`; any AMD, NVIDIA or Intel GPU driver includes
+OpenCL), and on every CPU core otherwise (`--cpu` forces it).  500 per spell
+is about 78,000 trails: about 16 s on a Radeon RX 9070 XT and about 18 min
+on a 16-core CPU.
+
 ---
 
 ## Spell effects and media
@@ -749,6 +767,7 @@ Measured on hardware:
 | `.github/workflows/release.yml` | Builds and publishes the Windows release on a version tag |
 | `opencaster/wand/` | **Wand link** (bleak only): `protocol.py` UUIDs, opcodes, parsing, frame builders · `effects.py` built-in animations and spellbook macro encoding · `device.py` one BLE link · `manager.py` scanning, auto-connect, reconnect, boxes · `__main__.py` headless CLI |
 | `opencaster/casting/` | **Spell assessment** (numpy/scipy only): `tracker.py` gyro gesture tracker · `shapes.py` SVG templates · `matcher.py` DTW recogniser and thresholds · `session.py` casting state machine · `calibration.py` motion calibration logic · `castlog.py` labelled casts · `profiles.py` per-wand calibration · `__main__.py` evaluate / replay CLI |
+| `opencaster/recognition/` | **Recognition testing and training** (offline; never loaded by the app): `synth.py` synthetic casts and near-misses, per-spell threshold fitting · `gpu.py` bulk DTW scoring on the GPU (OpenCL, optional) · `__main__.py` synth CLI |
 | `opencaster/spellbook.py` | Original spell data, cast colours, sounds, videos; mastery progress |
 | `opencaster/settings.py` | Default colour, house, Patronus, API settings (`settings.json`) |
 | `opencaster/duel.py` | Duel rules: quick-draw, clash and Duelling Club |
@@ -782,7 +801,11 @@ wands.
 3. Fork this repository, add your casts to `casts/casts.jsonl`, and open a
    pull request – or attach the file to an issue if pull requests are new
    to you.  Each record holds the gesture trail, the labels and scores, a
-   timestamp and your wand's Bluetooth address – nothing else.
+   timestamp and your wand's Bluetooth address – nothing else.  Casts also
+   keep the wand's raw motion (1 s before the window opens, then the whole
+   gesture), so tracker improvements can be re-run on them later
+   (`python -m opencaster.casting evaluate --retrack`); that's about
+   10–30 KB per cast.
 
 **Code, spells and ideas** are just as welcome: bolt something on and open
 a pull request.  [Architecture](#architecture) shows how the pieces fit,

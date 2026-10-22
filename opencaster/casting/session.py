@@ -22,6 +22,10 @@ Rules:
   - While calibrating, casts aren't assessed; starting it discards a cast
     still waiting for its label.
   - Pad overrides force pads on (a workaround for a broken sensor).
+  - Labelled casts carry their raw motion (PREROLL_S before the window
+    opened, then every sample until it closed) and the tracker's state at
+    opening, so later tracker versions can be re-run on them
+    (castlog.retrack).
 
 Events:
     "pads"          (mask: int)          effective pad mask (bit 0..3)
@@ -37,7 +41,9 @@ Events:
     "calibration"   (state dict)         see calibration.MotionCalibrator.state
 """
 
+import copy
 import time
+from collections import deque
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Callable, Optional
@@ -45,12 +51,13 @@ from typing import Callable, Optional
 import numpy as np
 
 from .calibration import MotionCalibrator
-from .castlog import CastLog, trail_extent
+from .castlog import CastLog, encode_imu, trail_extent
 from .matcher import MIN_TRAIL_PTS, SpellMatcher
 from .shapes import SpellLibrary, spell_key
-from .tracker import GestureTracker
+from .tracker import SAMPLE_RATE_HZ, GestureTracker
 
 MIN_GESTURE_DEG = 15.0
+PREROLL_S       = 1.0       # raw motion kept from before a window opens
 
 GATE_OK, GATE_SHORT, GATE_SMALL, GATE_NO_SPELLS = "ok", "too_short", "too_small", "no_spells"
 
@@ -147,6 +154,10 @@ class CastSession:
         self._mask = 0
         self._overrides = 0
         self._opened = 0.0
+        self._motion: Optional[dict] = None       # profile motion block the tracker was built from
+        self._recent = deque(maxlen=int(PREROLL_S * SAMPLE_RATE_HZ))
+        self._imu: Optional[tuple] = None         # (pre-roll, gesture samples, tracker state) while open
+        self._cast_imu: Optional[tuple] = None    # the same for the cast just closed
 
     def _emit(self, name: str, payload=None):
         self.on_event(name, payload)
@@ -160,6 +171,9 @@ class CastSession:
     def feed_imu(self, samples):
         if self.calibrator is not None:
             self.calibrator.feed(samples)
+        if self.active:
+            self._imu[1].extend(samples)
+        self._recent.extend(samples)
         grew = self.tracker.feed_many(samples)
         if not self.active:
             return
@@ -176,7 +190,9 @@ class CastSession:
     def set_motion(self, motion: Optional[dict]):
         """Rebuild the tracker from a wand profile's motion block."""
         self.tracker = GestureTracker.from_profile(motion)
+        self._motion = copy.deepcopy(motion)
         self.active = False
+        self._imu = None
 
     def set_target(self, name: Optional[str]):
         t = self.library.get(name) if name else None
@@ -204,6 +220,7 @@ class CastSession:
         """Link lost: drop the open window and pad state without a cast."""
         self.active = False
         self.tracker.end()
+        self._imu = None
         self._mask = 0
         self._emit("pads", self._overrides)
 
@@ -239,12 +256,14 @@ class CastSession:
     def _open(self):
         self.active = True
         self._opened = self.clock()
+        self._imu = (list(self._recent), [], self.tracker.state())   # state before begin()
         self.tracker.begin()
         self._emit("window_open", self.target)
 
     def _close(self):
         self.active = False
         trail = self.tracker.end()
+        self._cast_imu, self._imu = self._imu, None
         held = self.clock() - self._opened
         if held < self.MIN_CAST_S:
             self._emit("tap", held)
@@ -269,4 +288,12 @@ class CastSession:
             "accepted":  r.accepted,
             "scores":    [[m.spell, m.score] for m in r.ranked],
             "target":    r.target,
+            **self._raw_motion(),
         }
+
+    def _raw_motion(self) -> dict:
+        if self._cast_imu is None:
+            return {}
+        pre, gesture, state = self._cast_imu
+        return {"imu": encode_imu(pre + gesture, len(pre), SAMPLE_RATE_HZ),
+                "motion": self._motion, "tracker": state}
