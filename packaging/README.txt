@@ -40,7 +40,7 @@ Help improve recognition
 ------------------------
 Keep "Label casts" on and label what you meant to cast.  Then share your
 casts\casts.jsonl in a pull request (or an issue) on GitHub - see
-"Contributing" in the project README.  Each record holds the gesture
+CONTRIBUTING.md in the project.  Each record holds the gesture
 trail, labels, scores, a timestamp and your wand's Bluetooth address.
 
 Licences of the bundled components: THIRD_PARTY_NOTICES.txt.

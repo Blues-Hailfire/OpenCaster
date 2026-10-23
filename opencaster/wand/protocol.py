@@ -5,7 +5,7 @@ UUIDs, opcodes, notification parsing, IMU decoding and LED/haptic frame
 builders.  Everything here is a plain function or dataclass, so it can be
 unit-tested and reused without a Bluetooth adapter.
 
-Wire facts (see README "Protocol reference"):
+Wire facts (see docs/protocol.md):
   - Commands go to WRITE_UUID with write-without-response.
   - Events arrive on NOTIFY_UUID; the first byte is the opcode.
   - Effects are frames: 0x68 followed by commands.  The app writes 0x60

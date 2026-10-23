@@ -31,7 +31,7 @@ the pattern):
    `gui/app.py`.  Pages that want every spell call `set_free_cast(True)`
    while shown (see `_show_page`).
 5. **Headless**: a flag in `opencaster/__main__.py` and printing in its `on_…` handler.
-6. **Docs**: README section + the `duel` snapshot fields under "Control API".
+6. **Docs**: the page for it in `docs/` (`duel.md` for a duel mode) + the `duel` snapshot fields in `docs/api.md`.
 
 The NPC (`opencaster/npc.py`) shows how a computer player joins any mode:
 the core plays its moves with timers through the same `_on_session` path as
@@ -70,7 +70,7 @@ a wand (window_open → trail events → cast), so engines never special-case it
 - Add a function to `opencaster/wand/effects.py` built from proven
   commands (`_prefixed`, `p.all_groups`, `p.changeled`, `_buzz_pulse`,
   waits), register it in `BUILTIN` if the API should offer it, and list it
-  in the API's effect help (`opencaster/api/__main__.py`) and the README.
+  in the API's effect help (`opencaster/api/__main__.py`) and `docs/media.md`.
 
 ## Testing without hardware
 - `examples/fake_wands.py`: fake BLE devices under the real manager, core,

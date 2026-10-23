@@ -1,6 +1,6 @@
 # The wand: hardware and protocol facts
 
-Full tables: README.md → "Protocol reference" and "How recognition works".
+Full tables: `docs/protocol.md` and `docs/spells.md` → "How recognition works".
 `opencaster.wand.protocol` and `.effects` implement all of this; prefer them
 to raw bytes.
 

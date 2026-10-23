@@ -82,5 +82,5 @@ fakes don't prove the feel on a real wand – say what still needs hardware.
 - [reference/events.md](reference/events.md) – manager, session, core and API events with payloads
 - [reference/hardware.md](reference/hardware.md) – BLE protocol, pads, IMU, LEDs, timing
 - [reference/extending.md](reference/extending.md) – how modes, pages, spells and effects are built and tested
-- README.md in the repo root – user-facing docs; "Protocol reference" and
-  "How recognition works" have the full tables.
+- README.md in the repo root, and the user-facing docs in `docs/`;
+  `docs/protocol.md` and `docs/spells.md` ("How recognition works") have the full tables.

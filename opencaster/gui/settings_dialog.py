@@ -119,8 +119,8 @@ class SettingsDialog(QDialog):
             (f"Other programs can light and buzz the wands and hear about casts at "
              f"<span style='color:{T.GOLD}'>{url}</span>"
              if api.get("enabled", True) else "The control API is off.")
-            + "<br><span style='color:%s'>Configure it in settings.json (see README → "
-              "Control API).</span>" % T.TEXT_FAINT)
+            + "<br><span style='color:%s'>Configure it in settings.json (see "
+              "docs/api.md).</span>" % T.TEXT_FAINT)
         api_text.setTextFormat(Qt.RichText)
         api_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
         api_text.setWordWrap(True)
