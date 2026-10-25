@@ -234,8 +234,7 @@ def install(wands=1, quick: bool = True) -> Rig:
         async def initialise(self):
             if not rig.quick:
                 return await super().initialise()
-            await self.write(p.IMU_STOP)
-            await self.write(p.IMU_START)
+            await self._start_imu()
             self._on_notify(self, Battery(80))
 
         async def close(self):

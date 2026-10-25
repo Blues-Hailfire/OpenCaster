@@ -91,6 +91,12 @@ Measured on hardware:
 - Gyro bias ≈1 °/s, drifting slowly.  Still-noise 0.1–0.7 °/s.
 - The tip is sensor **+y** (both rest poses read ≈0 g on y, and swing
   centripetal force lands on y) on every wand, so it isn't calibrated.
+- A wand can stop streaming while it stays connected (battery and pad
+  notifications still arrive), seen after hours connected.  When the pads
+  are pressed after more than 1 s without an IMU packet, OpenCaster sends
+  the stop and start writes again; if no packet follows within 1 s, it drops
+  the link and reconnects the wand (`Wand._revive_imu` in
+  `opencaster/wand/device.py`), so always-on setups recover on their own.
 
 ## References
 

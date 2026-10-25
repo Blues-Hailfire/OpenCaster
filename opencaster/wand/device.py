@@ -11,6 +11,7 @@ All methods must be called on the asyncio loop thread.
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -145,6 +146,7 @@ class Device:
         t = asyncio.create_task(coro)
         self._tasks.add(t)
         t.add_done_callback(self._tasks.discard)
+        return t
 
     # ── notifications ─────────────────────────────────────────────────────────
 
@@ -153,12 +155,23 @@ class Device:
         if isinstance(event, (p.Challenge, p.Pong)):
             # 0x02 is answered too, as the original OpenCaster did on hardware.
             self.send(p.PONG)
+        self._observe(event)
         self._on_notify(self, event)
+
+    def _observe(self, event):
+        """Subclass hook: sees every notification before the listener."""
 
 
 class Wand(Device):
     """A wand link: haptic init, connect animation, IMU stream, battery."""
     welcome_effect: Optional[Effect] = None     # connect animation (default: welcome())
+    # A wand can stop streaming IMU while staying connected (seen after hours
+    # connected).  Pressing the pads after this long without a packet restarts
+    # the stream; if it stays silent for as long again, the link is dropped
+    # and the manager reconnects the wand, so always-on setups recover alone.
+    IMU_STALE_S = 1.0
+    _imu_at: Optional[float] = None             # last IMU packet (or stream start)
+    _imu_revive: Optional[asyncio.Task] = None
 
     async def initialise(self):
         """Run after connect(): the wand is fully usable once this returns."""
@@ -168,9 +181,7 @@ class Wand(Device):
             await asyncio.sleep(p.HW_INIT_GAP_S)
         await asyncio.sleep(0.1)
         await self.play_and_wait(self.welcome_effect or welcome())
-        await self.write(p.IMU_STOP)                # reset any stale stream
-        await asyncio.sleep(0.1)
-        await self.write(p.IMU_START)
+        await self._start_imu()
         try:
             await self.client.start_notify(
                 p.BATTERY_UUID, lambda _c, d: self._on_notify(self, Battery(d[0])))
@@ -178,6 +189,36 @@ class Wand(Device):
             self._on_notify(self, Battery(level[0]))
         except Exception as e:
             log.debug("%s: battery unavailable: %s", self.info.name, e)
+
+    async def _start_imu(self):
+        await self.write(p.IMU_STOP)                # reset any stale stream
+        await asyncio.sleep(0.1)
+        await self.write(p.IMU_START)
+        self._imu_at = time.monotonic()
+
+    async def _revive_imu(self):
+        """Restart a silent IMU stream; reconnect if that doesn't bring it back."""
+        try:
+            await self._start_imu()
+            started = self._imu_at
+            await asyncio.sleep(self.IMU_STALE_S)
+            if self._imu_at != started:
+                return                              # packets again
+        except Exception as e:
+            log.debug("%s: IMU restart failed: %s", self.info.name, e)
+        log.warning("%s: IMU still silent - reconnecting", self.info.name)
+        self._lost.set()                            # the manager closes and reconnects
+
+    def _observe(self, event):
+        now = time.monotonic()
+        if isinstance(event, p.ImuBatch):
+            self._imu_at = now
+        elif (isinstance(event, p.Buttons) and event.mask and self._imu_at is not None
+              and now - self._imu_at > self.IMU_STALE_S
+              and not (self._imu_revive and not self._imu_revive.done())):
+            log.warning("%s: no IMU data for %.0f s - restarting the stream",
+                        self.info.name, now - self._imu_at)
+            self._imu_revive = self._spawn(self._revive_imu())
 
     async def close(self):
         if self.connected:

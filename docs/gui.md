@@ -11,7 +11,9 @@ for every connected wand (its colour, nickname and battery) and any boxes;
 - **Automatic:** on launch the wands that were connected last time are
   reconnected whenever they're in range; with none of those around, the
   first wand found is connected.  While nothing is found it rescans every
-  10 s, and a dropped link is reconnected automatically.
+  10 s, and a dropped link is reconnected automatically.  So is a wand
+  that has stopped sending motion (it can, after hours connected): the
+  first pad press notices and revives it, so leave OpenCaster running.
 - **More wands:** **Scan**, pick a wand under *Found wands*, **Connect**.
   Every connected wand casts independently, each in its own stage.
 - **A wand's settings:** click its pill for its nickname, colour,
