@@ -1,4 +1,6 @@
 # OpenCaster
+<img width="4032" height="3024" alt="Wands 5" src="https://github.com/user-attachments/assets/f077310a-4ebf-44c7-bbde-8ae3f772c157" />
+
 
 <a href="https://www.buymeacoffee.com/hailfire"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=hailfire&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="42"></a>
 
