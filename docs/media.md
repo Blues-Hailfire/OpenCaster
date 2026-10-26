@@ -48,6 +48,7 @@ a wand macro fall back to a generic pulse in the wand's colour.  Colovaria's
 | `breathe` | Cast window open: a bloom, then a slow breath in the wand's colour (body only) |
 | `success` | Spell without its own macro: buzz, colour wave tip → handle, white flash |
 | `fail` | Failed cast: a faint red wash on the body, no buzz |
+| `display` | Display mode: a steady glow in the wand's colour (body only) from connecting until its pads are pressed |
 | `countdown`, `go`, `round_lost`, `duel_won` | Duel cues (body only) |
 | `locked_in` | Clash pick made: one buzz and a dim glow in the wand's own colour, giving nothing away |
 

@@ -20,7 +20,7 @@ for every connected wand (its colour, nickname and battery) and any boxes;
 - **More wands:** **Scan**, pick a wand under *Found wands*, **Connect**.
   Every connected wand casts independently, each in its own stage.
 - **A wand's settings:** click its pill for its nickname, colour,
-  **Calibrate…** and **Disconnect** (a disconnected wand isn't reconnected
+  **Display mode**, **Calibrate…** and **Disconnect** (a disconnected wand isn't reconnected
   automatically again).
 - **Display mode** (per wand, in its settings; off by default): each time
   the wand connects, its body glows steadily in its colour until any of its
@@ -91,7 +91,7 @@ picker and Colovaria's a **house** picker.
 | Control API | Shows the API address (configured in `settings.json`) |
 
 Core settings live in `settings.json` (shared with the headless runner and
-the API); per-wand colour and nickname in `wand_profiles.json`.
+the API); per-wand colour, nickname and display mode in `wand_profiles.json`.
 
 ## Calibration
 

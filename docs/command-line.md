@@ -21,5 +21,9 @@ python -m opencaster.casting replay capture.csv # replay a recorded capture thro
 python -m opencaster [--target Lumos] [--duel | --clash | --club [N] [--random-order]] [--npc [LEVEL]]
 ```
 
+`python -m opencaster` reads the same `settings.json` and
+`wand_profiles.json` as the GUI, so passive mode and each wand's display
+mode apply headless too.
+
 `--address AA:BB:...` picks a wand for the wand commands; `replay --wand
 ADDRESS` uses that wand's calibration.

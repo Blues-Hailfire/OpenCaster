@@ -41,7 +41,10 @@ effects (on the wand, and on a Magic Caster box if one is nearby).  Several
 wands can cast at once, wizards can duel (a quick-draw race or a clash of
 spell elements for two, or a Duelling Club rally for up to five), an
 enchanted jack-o'-lantern on screen reacts to every spell, and other
-programs can drive the wands through a local API.
+programs can drive the wands through a local API.  Leave it running in
+passive mode to connect every wand that comes into range, and put a wand in
+display mode to have it glow in its colour until someone picks it up and
+presses its pads.
 
 ## Credits
 
@@ -97,6 +100,8 @@ python OpenCaster_GUI.py
    `python -m opencaster.media_pack`.  Without it the spellbook shows
    shapes only.
 2. **Launch:** the app scans for wands and boxes and connects automatically.
+   Turn on **Passive mode** in Settings to keep scanning and connect every
+   wand in range.
 3. **Calibrate (optional):** press **Calibrate** once per wand to measure its gyro bias.
 4. **Cast:** hold all four touch pads, draw the spell, release.
 
@@ -107,8 +112,9 @@ they work on every platform PySide6 supports.
 
 ## Documentation
 
-- [Using the GUI](docs/gui.md) – connecting wands, casting, practising,
-  labelling casts, the Spellbook, Settings and calibration
+- [Using the GUI](docs/gui.md) – connecting wands (and passive mode),
+  casting, practising, labelling casts, the Spellbook, Settings, display
+  mode and calibration
 - [Wizard's duel](docs/duel.md) – quick-draw, clash, the Duelling Club and
   the NPC opponent
 - [Environment: the enchanted jack-o'-lantern](docs/environment.md)

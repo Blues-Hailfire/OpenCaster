@@ -15,7 +15,8 @@ BLE ──▶ opencaster.wand ──notify──▶ opencaster.casting ──cas
 ```
 
 - **Event-driven throughout.**  bleak delivers notifications, disconnects
-  and scan results as callbacks on one asyncio loop; nothing polls.
+  and scan results as callbacks on one asyncio loop; nothing polls (bar
+  passive mode's scan every 20 s, which is off unless you turn it on).
   Keepalive challenges are answered inside the BLE notify handler.  Gesture
   timeouts are checked as IMU batches arrive, so the casting logic needs no
   timers or threads and replays deterministically.  GUI animations run a
@@ -40,7 +41,7 @@ BLE ──▶ opencaster.wand ──notify──▶ opencaster.casting ──cas
 | `setup.bat` / `setup.ps1`, `setup.sh` | One-step setup: Python check, private environment, packages, shortcuts / launcher |
 | `packaging/` | Windows release: PyInstaller spec, `build.ps1`, the zip's README and third-party notices |
 | `.github/workflows/release.yml` | Builds and publishes the Windows release on a version tag |
-| `opencaster/wand/` | **Wand link** (bleak only): `protocol.py` UUIDs, opcodes, parsing, frame builders · `effects.py` built-in animations and spellbook macro encoding · `device.py` one BLE link · `manager.py` scanning, auto-connect, reconnect, boxes · `__main__.py` headless CLI |
+| `opencaster/wand/` | **Wand link** (bleak only): `protocol.py` UUIDs, opcodes, parsing, frame builders · `effects.py` built-in animations and spellbook macro encoding · `device.py` one BLE link · `manager.py` scanning, auto-connect, passive mode, reconnect, boxes · `__main__.py` headless CLI |
 | `opencaster/casting/` | **Spell assessment** (numpy/scipy only): `tracker.py` gyro gesture tracker · `shapes.py` SVG templates · `matcher.py` DTW recogniser and thresholds · `session.py` casting state machine · `calibration.py` motion calibration logic · `castlog.py` labelled casts · `profiles.py` per-wand calibration · `__main__.py` evaluate / replay CLI |
 | `opencaster/recognition/` | **Recognition testing and training** (offline; never loaded by the app): `synth.py` synthetic casts and near-misses, per-spell threshold fitting · `gpu.py` bulk DTW scoring on the GPU (OpenCL, optional) · `__main__.py` synth CLI |
 | `opencaster/spellbook.py` | Original spell data, cast colours, sounds, videos; mastery progress |
@@ -57,6 +58,6 @@ BLE ──▶ opencaster.wand ──notify──▶ opencaster.casting ──cas
 | `spells/` | Spell templates (52 SVGs, used for recognition and the trail guide) |
 | `spells/icons/` | Original gesture PNGs by eigger (MIT), shown on spell cards |
 | `casts/casts.jsonl` | Labelled casts |
-| `wand_profiles.json` | Per-wand calibration, colour, nickname and auto-connect |
+| `wand_profiles.json` | Per-wand calibration, colour, nickname, display mode and auto-connect |
 | `media/` | `spellbook.json` (the spell manifest) and `Logo/` are tracked; the media pack (sounds, videos) is gitignored – downloaded by setup or the app |
 | `Bluetooth Capture/` | Original btsnoop capture of the official app |

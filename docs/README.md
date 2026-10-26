@@ -4,8 +4,9 @@
 
 **Playing**
 
-- [Using the GUI](gui.md) – connecting wands, casting, practising, labelling
-  casts, the Spellbook, Settings and calibration
+- [Using the GUI](gui.md) – connecting wands (and passive mode), casting,
+  practising, labelling casts, the Spellbook, Settings, display mode and
+  calibration
 - [Wizard's duel](duel.md) – quick-draw, clash, the Duelling Club and the NPC
   opponent
 - [Environment: the enchanted jack-o'-lantern](environment.md) – what every

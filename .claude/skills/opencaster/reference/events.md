@@ -63,7 +63,7 @@ label_needed labelled calibrating calibration` → `(address, payload)`.
 `patronus_video`.
 
 Wand info dict: `address`, `name`, `nickname`, `label`, `color`,
-`own_color`, `connected`, `ready`, `wanted`, `battery` (the NPC's adds
+`own_color`, `display_mode`, `connected`, `ready`, `wanted`, `battery` (the NPC's adds
 `npc: True`, `level`).
 
 ## API Server-Sent Events (JSON `data:` lines)

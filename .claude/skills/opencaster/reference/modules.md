@@ -17,12 +17,14 @@ Layers, lowest first; each depends only on those above it in this list.
 from opencaster.wand import WandManager, effects, protocol as p, DeviceInfo, Battery, Emitter
 ```
 
-**WandManager**`(auto=(), auto_connect=True, boxes=True, welcome=None)`
+**WandManager**`(auto=(), auto_connect=True, boxes=True, passive=False, welcome=None)`
 - `await run()` – supervise until `stop()`: scan, connect wanted wands,
   reconnect, keep each linked.  `auto`: addresses to connect when found
-  (empty: the first wand found).  `welcome(info) -> Effect` per connect.
+  (empty: the first wand found).  `passive`: instead scan every
+  `PASSIVE_SCAN_S` (20 s) and connect every wand in range, except ones
+  `disconnect()`ed this session.  `welcome(info) -> Effect` per connect.
 - `stop()`, `connect(address)`, `disconnect(address)`, `request_scan()`,
-  `is_wanted(address)`.
+  `set_passive(on)`, `is_wanted(address)`.
 - `play(effect, address=None)` – None = every wand.  `play_macro(macro,
   variables=None, address=None)`, `play_boxes_macro(macro, variables=None)`.
 - `found` {address: DeviceInfo}, `wands` {address: Wand} (linked now).
@@ -43,7 +45,8 @@ text.  Frame builders: `frame(*cmds)`, `changeled(group, r, g, b, ms)`,
 Built-ins (`effects.BUILTIN` by name): `welcome(rgb)`, `success(rgb)`,
 `fail()`, `glow(r, g, b, fade_ms)` (stays on), `breathe(rgb, seconds,
 period)`, `clear()`, `countdown_tick(rgb)`, `go(rgb)`, `locked_in(rgb)`,
-`round_lost()`, `duel_won(rgb)`, `color_preview(rgb)`.  Non-success cues
+`round_lost()`, `duel_won(rgb)`, `color_preview(rgb)`, `display(rgb)`
+(body glow that stays on).  Non-success cues
 keep the tip dark (see the tip rule in the module docstring).  Direct: `light(rgb, fade_ms=300,
 hold_ms=0, groups=range(4))` (hold 0 = stays on), `vibrate(ms)`,
 `solid("#RRGGBB")`.  Macros (the original app's format):
@@ -119,6 +122,8 @@ loop thread.**
 | `start_duel(players, pool, mode, order, npc_level, cast_s=None)` | `mode`: "race", "clash", "club"; `players`: addresses and/or `"npc"`; `cast_s`: seconds to cast (None: the mode's default) |
 | `cancel_duel()`, `skip_round()` | |
 | `set_wand_color(a, "#RRGGBB"\|None)`, `set_nickname(a, s)`, `set_default_color`, `set_house`, `set_patronus` | settings (persisted) |
+| `set_passive_mode(on)` | keep scanning, connect every wand in range (`settings.json`, off by default) |
+| `set_display_mode(a, on)` | that wand glows in its colour from each connect until its pads are pressed (`wand_profiles.json`, off by default) |
 | `wand_info(a)`, `wand_list()`, `wand_label(a)`, `wand_color(a)` | queries |
 
 Attributes: `wands` {address: DeviceInfo}, `ready` set, `sessions`,
