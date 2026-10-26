@@ -45,7 +45,7 @@ BLE ──▶ opencaster.wand ──notify──▶ opencaster.casting ──cas
 | `opencaster/recognition/` | **Recognition testing and training** (offline; never loaded by the app): `synth.py` synthetic casts and near-misses, per-spell threshold fitting · `gpu.py` bulk DTW scoring on the GPU (OpenCL, optional) · `__main__.py` synth CLI |
 | `opencaster/spellbook.py` | Original spell data, cast colours, sounds, videos; mastery progress |
 | `opencaster/media_pack.py` | Downloads, checks and unpacks the media pack into `media/` |
-| `opencaster/settings.py` | Default colour, house, Patronus, API settings (`settings.json`) |
+| `opencaster/settings.py` | Default colour, house, Patronus, passive mode, API settings (`settings.json`) |
 | `opencaster/duel.py` | Duel rules: quick-draw, clash and Duelling Club |
 | `opencaster/npc.py` | The NPC opponent: skill levels, what it casts and how long it takes (pure logic; the core plays it) |
 | `opencaster/elements.py` | Spell elements and who beats whom (clash duel, jack-o'-lantern shields) |

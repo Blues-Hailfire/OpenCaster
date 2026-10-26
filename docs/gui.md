@@ -14,11 +14,17 @@ for every connected wand (its colour, nickname and battery) and any boxes;
   10 s, and a dropped link is reconnected automatically.  So is a wand
   that has stopped sending motion (it can, after hours connected): the
   first pad press notices and revives it, so leave OpenCaster running.
+- **Passive mode** (Settings, off by default): scans every 20 s, also
+  while wands are connected, and connects every wand in range.  A wand you
+  disconnect by hand stays disconnected until you restart.
 - **More wands:** **Scan**, pick a wand under *Found wands*, **Connect**.
   Every connected wand casts independently, each in its own stage.
 - **A wand's settings:** click its pill for its nickname, colour,
   **Calibrate…** and **Disconnect** (a disconnected wand isn't reconnected
   automatically again).
+- **Display mode** (per wand, in its settings; off by default): each time
+  the wand connects, its body glows steadily in its colour until any of its
+  pads is pressed, then it behaves as usual.
 - **Boxes:** every box (`MCB-*`) found is connected too.
 
 ## Casting
@@ -80,6 +86,7 @@ picker and Colovaria's a **house** picker.
 | Default wand colour | The breathing cast glow and connect animation of wands without their own colour (blue until changed).  A wand's own colour is set by clicking its pill. |
 | Hogwarts house | Gryffindor, Hufflepuff, Ravenclaw or Slytherin: plays the house's sound and fills Colovaria's house colour |
 | Patronus | Random, or any of the 69 Patronuses that have a video; shown after Expecto Patronum (with a preview) |
+| Passive mode | Off by default.  When on, keeps scanning every 20 s and connects every wand in range |
 | Media | Casting sounds, spell videos, mishap videos, ambient casting sound, wand-connect sound |
 | Control API | Shows the API address (configured in `settings.json`) |
 

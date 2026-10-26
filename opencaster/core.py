@@ -88,7 +88,9 @@ class OpenCaster:
         self._npc_timers: list = []
         self._aim: dict = {}                # address → {tracker, glow, lit}: wands steering
         self._payoff_until: dict = {}       # address → loop time its spell light ends
+        self._display: set = set()          # wands showing their display-mode glow
         self.manager = WandManager(auto=self.profiles.auto_connect(), boxes=boxes,
+                                   passive=self.settings.passive_mode,
                                    welcome=lambda info: effects.welcome(self.wand_rgb(info.address)))
         self.manager.events.on("*", self._on_wand)
         self.use_api = use_api
@@ -144,6 +146,7 @@ class OpenCaster:
                 "nickname": self.profiles.get(address, "nickname") or "",
                 "label": self.wand_label(address), "color": self.wand_color(address),
                 "own_color": bool(self.profiles.get(address, "color")),
+                "display_mode": bool(self.profiles.get(address, "display_mode")),
                 "connected": address in self.wands, "ready": address in self.ready,
                 "wanted": self.manager.is_wanted(address),
                 "battery": self.battery.get(address)}
@@ -320,8 +323,36 @@ class OpenCaster:
         self.settings.patronus = name if name in self.spellbook.media.patronuses else "random"
         self.events.emit("settings", self.settings.snapshot())
 
+    def set_passive_mode(self, on: bool):
+        """Keep scanning and connect every wand in range (see WandManager)."""
+        self.settings.passive_mode = on
+        self.manager.set_passive(self.settings.passive_mode)
+        self.events.emit("settings", self.settings.snapshot())
+
+    def set_display_mode(self, address: str, on: bool):
+        """Display mode: each time the wand connects it glows in its colour
+        until its pads are pressed."""
+        self.profiles.set(address, "display_mode", True if on else None,
+                          self.wands[address].name if address in self.wands else "")
+        if on and address in self.ready:
+            self._display_start(address)
+        elif not on:
+            self._display_end(address)
+        self.events.emit("wand_info", self.wand_info(address))
+
+    def _display_start(self, address: str):
+        self._display.add(address)
+        self.manager.play(effects.display(self.wand_rgb(address)), address)
+
+    def _display_end(self, address: str):
+        if address in self._display:
+            self._display.discard(address)
+            self.manager.play(effects.clear(), address)
+
     def _show_color(self, address: str):
-        if address in self.wands:
+        if address in self._display:              # keep glowing, in the new colour
+            self.manager.play(effects.display(self.wand_rgb(address)), address)
+        elif address in self.wands:
             self.manager.play(effects.color_preview(self.wand_rgb(address)), address)
 
     # direct control (API) ---------------------------------------------------------
@@ -562,6 +593,8 @@ class OpenCaster:
                     self._aim_feed(a, ev.samples)
                 self.events.emit("imu", a, ev.samples[0])
             elif isinstance(ev, p.Buttons):
+                if ev.mask:                   # before the session: a cast window's glow wins
+                    self._display_end(a)
                 if a in self.sessions:
                     self.sessions[a].feed_buttons(ev.mask)
             elif isinstance(ev, p.SpellCast):
@@ -597,8 +630,11 @@ class OpenCaster:
                 return
             if name == "ready":
                 self.ready.add(a)
+                if self.profiles.get(a, "display_mode"):
+                    self._display_start(a)
             if name == "disconnected":
                 self._aim_end(a, clear=False)
+                self._display.discard(a)
                 self.wands.pop(a, None)
                 self.ready.discard(a)
                 self.battery.pop(a, None)

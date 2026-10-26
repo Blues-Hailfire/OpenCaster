@@ -10,7 +10,7 @@ light and buzz the wands and hear about casts, over plain HTTP + JSON at
 | Request | Body / notes |
 |---------|--------------|
 | `GET /api/status` | wands, duel state, settings |
-| `GET /api/wands` | connected wands: address, name, nickname, colour, battery |
+| `GET /api/wands` | connected wands: address, name, nickname, colour, display mode, battery |
 | `GET /api/spells` | spells: name, cast colours, difficulty, mastery count |
 | `GET /api/events` | event stream (`?include=imu,trail` adds raw motion) |
 | `POST /api/light` | `{"wand": "all", "color": "#FF8800", "fade_ms": 300, "hold_ms": 0, "groups": [0,1,2,3]}` — `hold_ms` 0 leaves it on; groups run tip (0) to handle (3) |

@@ -8,6 +8,7 @@ nickname, calibration) live in wand_profiles.json instead.
                     for wands without their own colour ("#0000FF")
     house           Hogwarts house: fills Colovaria's house colour
     patronus        Patronus shown after Expecto Patronum ("random" or a name)
+    passive_mode    keep scanning and connect every wand in range (off)
     api             local control API: enabled, host, port, token, allow_origins
 """
 
@@ -33,6 +34,7 @@ DEFAULTS = {
     "default_color": "#0000FF",
     "house": "",
     "patronus": "random",
+    "passive_mode": False,
     "api": {"enabled": True, "host": "127.0.0.1", "port": 8765, "token": "",
             "allow_origins": []},
 }
@@ -114,6 +116,15 @@ class Settings:
     @patronus.setter
     def patronus(self, value: str):
         self.data["patronus"] = value or "random"
+        self.save()
+
+    @property
+    def passive_mode(self) -> bool:
+        return self.data.get("passive_mode") is True
+
+    @passive_mode.setter
+    def passive_mode(self, value: bool):
+        self.data["passive_mode"] = bool(value)
         self.save()
 
     @property

@@ -129,6 +129,12 @@ def fail() -> Effect:
                  + [(p.all_groups(0, 0, 0, 500), 0.0)])
 
 
+def display(rgb: tuple) -> Effect:
+    """Display mode: the body glows steadily in the wand's colour until its
+    pads are pressed (the tip stays dark)."""
+    return tuple(_prefixed(_body(rgb, 1000)))
+
+
 def color_preview(rgb: tuple) -> Effect:
     """A wand's colour was changed: show it on the body for a moment."""
     return tuple(_prefixed(_body(rgb, 250), 1.2) + [(p.all_groups(0, 0, 0, 250), 0.0)])

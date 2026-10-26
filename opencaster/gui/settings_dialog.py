@@ -95,6 +95,17 @@ class SettingsDialog(QDialog):
         self.video.finished.connect(self.video.hide)
         lay.addWidget(self.video)
 
+        lay.addWidget(section("Wands"))
+        passive = QCheckBox("Passive mode: keep scanning and connect every wand in range")
+        passive.setChecked(cfg.get("passive_mode", False) is True)
+        passive.toggled.connect(lambda on: self.bridge.call("set_passive_mode", on))
+        lay.addWidget(passive)
+        passive_hint = QLabel("Scans every 20 s, also while wands are connected.  A wand "
+                              "you disconnect stays disconnected until you restart.")
+        passive_hint.setObjectName("Dim")
+        passive_hint.setWordWrap(True)
+        lay.addWidget(passive_hint)
+
         lay.addWidget(section("Media"))
         for key, text, default in (
                 ("sound", "Casting sounds", True),
@@ -157,7 +168,7 @@ class SettingsDialog(QDialog):
 
 
 class WandDialog(QDialog):
-    """One wand: nickname, colour, calibration, disconnect."""
+    """One wand: nickname, colour, display mode, calibration, disconnect."""
 
     def __init__(self, state, address: str, open_calibration, parent=None):
         super().__init__(parent)
@@ -196,6 +207,15 @@ class WandDialog(QDialog):
         crow.addWidget(default)
         crow.addStretch()
         grid.addLayout(crow, 1, 1)
+        self.display = QCheckBox("Display mode")
+        self.display.setChecked(bool(info.get("display_mode")))
+        self.display.setToolTip("Each time this wand connects it glows in its colour "
+                                "until its pads are pressed")
+        self.display.toggled.connect(lambda on: self.bridge.call("set_display_mode", address, on))
+        grid.addWidget(self.display, 2, 1)
+        display_hint = QLabel("Glows in its colour after connecting, until its pads are pressed.")
+        display_hint.setObjectName("Dim")
+        grid.addWidget(display_hint, 3, 1)
         lay.addLayout(grid)
 
         buttons = QHBoxLayout()

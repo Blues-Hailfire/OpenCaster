@@ -8,6 +8,8 @@ WandManager supervises any number of wands and every box it finds:
     whenever a scan finds them; with nothing connected or wanted it falls
     back to the first wand found, rescanning every RESCAN_S while none is
     in range;
+  - in passive mode it instead scans every PASSIVE_SCAN_S and connects
+    every wand in range;
   - each wanted wand gets its own supervised link: held until bleak reports
     a disconnect, then reconnected with backoff (WinRT's spurious
     CancelledError counts as a transient failure);
@@ -67,15 +69,17 @@ async def _first(*aws):
 class WandManager:
     SCAN_S           = 6.0
     RESCAN_S         = 10.0
+    PASSIVE_SCAN_S   = 20.0     # passive mode: time between scans
     PROBE_SCAN_S     = 3.0      # short scan before retrying a wand that failed to connect
     BOX_MAX_FAILURES = 5
 
     def __init__(self, auto: Iterable[str] = (), auto_connect: bool = True,
-                 boxes: bool = True,
+                 boxes: bool = True, passive: bool = False,
                  welcome: Optional[Callable[[DeviceInfo], Effect]] = None):
         self.events = Emitter()
         self.auto = {a.upper() for a in auto}   # connect these whenever found
         self.auto_connect = auto_connect
+        self.passive = passive                  # keep scanning; connect every wand found
         self.use_boxes = boxes
         self.welcome = welcome                  # connect animation per wand
         self.found: dict = {}                   # address → DeviceInfo (wands and boxes)
@@ -97,6 +101,9 @@ class WandManager:
     async def run(self):
         """Supervise until stop(): find wands, keep the wanted ones linked."""
         while not self._stop.is_set():
+            if self.passive:
+                await self._passive_pass()
+                continue
             if self.auto_connect and not self._wanted:
                 await self.scan()
                 if not self._wanted:
@@ -111,6 +118,12 @@ class WandManager:
 
     def stop(self):
         self._stop.set()
+        self._wake.set()
+
+    def set_passive(self, on: bool):
+        """Passive mode: scan every PASSIVE_SCAN_S and connect every wand in
+        range.  Turning it off keeps the wands already connected."""
+        self.passive = bool(on)
         self._wake.set()
 
     def connect(self, address: str):
@@ -197,6 +210,23 @@ class WandManager:
         except asyncio.TimeoutError:
             pass
         self._wake.clear()
+
+    async def _passive_pass(self):
+        """One passive-mode round: scan, connect every wand that scan saw
+        (except ones disconnected by hand), then wait for the next round."""
+        started = time.monotonic()
+        await self.scan()
+        if not self.passive:                  # switched off during the scan
+            return
+        in_range = [i for i in self.found.values() if i.kind == "wand"
+                    and self._seen.get(i.address, -1e9) >= started
+                    and i.address.upper() not in self._dismissed]
+        for info in in_range:
+            self.connect(info.address)
+        if not in_range and not self._wanted:
+            self._status(f"Passive mode: no wand in range - scanning again in "
+                         f"{self.PASSIVE_SCAN_S:.0f} s")
+        await self._sleep(self.PASSIVE_SCAN_S)
 
     def _dispatch(self, device: Device, event):
         self.events.emit("notify", device.info, event)
