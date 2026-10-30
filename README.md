@@ -87,6 +87,17 @@ the app doesn't start, use the **OpenCaster (troubleshoot)** shortcut to see the
 `opencaster` launcher (plus an app-menu entry on Linux).  Skip the media
 download with `setup.ps1 -NoMedia` / `setup.sh --no-media`.
 
+**Raspberry Pi:** `bash setup-pi.sh` installs the system packages, turns
+on Bluetooth, runs `setup.sh`, turns on passive mode and starts
+OpenCaster at every boot.  The GUI needs 64-bit Raspberry Pi OS with the
+desktop on a Pi 4 or 5 (2 GB+); it opens when the desktop logs in (setup
+offers desktop auto-login).  Anything else (Lite, a 32-bit OS, a Pi 3 or
+Zero 2 W) is set up headless ([Running headless](docs/command-line.md)),
+with wand lights and buzz but no sounds, as the `opencaster` service:
+watch it with `journalctl -u opencaster -f`, and `sudo systemctl stop
+opencaster` before running `opencaster` by hand (only one copy can hold
+the wands).  Options: `--gui` / `--headless`, `--no-autostart`, `--no-passive`.
+
 **By hand:**
 
 ```bash
