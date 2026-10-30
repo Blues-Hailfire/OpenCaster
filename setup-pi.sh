@@ -66,6 +66,12 @@ OS="$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}")"
 say "  ${MODEL:-not a Raspberry Pi?}"
 say "  $OS, $ARCH, ${MEM_MB} MB, glibc ${GLIBC:-?}"
 [[ "$MODEL" == *"Raspberry Pi"* ]] || say "  (this doesn't look like a Pi - carrying on anyway)"
+CODENAME="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
+if [[ "$CODENAME" == "buster" || "$CODENAME" == "bullseye" ]]; then
+    fail "Raspberry Pi OS $CODENAME is too old: OpenCaster needs Python 3.11+, which comes with
+Bookworm and later.  Back up anything you need from this card, then flash the current
+Raspberry Pi OS (64-bit) with Raspberry Pi Imager and run this again."
+fi
 
 DESKTOP=0
 [[ "$(systemctl get-default 2>/dev/null || true)" == "graphical.target" ]] && DESKTOP=1
