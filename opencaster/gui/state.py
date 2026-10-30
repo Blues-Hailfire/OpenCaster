@@ -1,5 +1,6 @@
 """GUI-side snapshot of spells, wands and settings, kept current from core events."""
 
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -11,6 +12,18 @@ from ..casting.session import MIN_GESTURE_DEG
 from ..paths import ICONS_DIR
 from ..spellbook import MASTERY_CASTS
 from .media import SoundPlayer
+
+
+def _on_raspberry_pi() -> bool:
+    try:
+        return "Raspberry Pi" in Path("/proc/device-tree/model").read_text(errors="replace")
+    except OSError:
+        return False
+
+
+# A Pi decodes video in software, so cast and duel videos start off there
+# (Settings -> Media turns them back on; the spellbook's play button still works).
+OFF_ON_PI = {"video", "mishaps"} if _on_raspberry_pi() else set()
 
 
 def load_icon(path) -> Optional[QImage]:
@@ -147,7 +160,7 @@ class AppState(QObject):
     # ── preferences ───────────────────────────────────────────────────────────
 
     def flag(self, key: str, default: bool) -> bool:
-        return self.prefs.value(key, default, type=bool)
+        return self.prefs.value(key, default and key not in OFF_ON_PI, type=bool)
 
     def set_flag(self, key: str, value: bool):
         self.prefs.setValue(key, value)

@@ -86,7 +86,7 @@ if [[ "$MODE" == "gui" ]]; then
     [[ $BITS64 -eq 1 ]] \
         || fail "the GUI needs 64-bit Raspberry Pi OS (PySide6 has no 32-bit build). Re-run with --headless, or reinstall the 64-bit OS."
     [[ $DESKTOP -eq 1 ]] || say "  No desktop starts at boot (Lite?) - the GUI needs one to show its window."
-    [[ $MEM_MB -ge 1800 ]] || say "  Under 2 GB of memory: the GUI may be slow, and spell videos may stutter."
+    [[ $MEM_MB -ge 1800 ]] || say "  Under 2 GB of memory: the GUI may be slow."
     say "Setting up: the GUI"
 else
     say "Setting up: headless (the terminal; no GUI)"
